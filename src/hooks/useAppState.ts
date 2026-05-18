@@ -14,39 +14,52 @@ function emptyState(): AppState {
 
 // --- External store backed by localStorage ---
 
-let cache: AppState | null = null;
-let flushTimer: ReturnType<typeof setTimeout> | null = null;
-let listeners: Array<() => void> = [];
+// Persist store globals across HMR re-evaluations (FIX 3)
+declare global {
+  var __notesStore:
+    | {
+        cache: AppState | null;
+        flushTimer: ReturnType<typeof setTimeout> | null;
+        listeners: Array<() => void>;
+      }
+    | undefined;
+}
+
+if (!globalThis.__notesStore) {
+  globalThis.__notesStore = { cache: null, flushTimer: null, listeners: [] };
+}
+
+const store = globalThis.__notesStore;
 
 function emitChange() {
-  for (const fn of listeners) fn();
+  for (const fn of store.listeners) fn();
 }
 
 function subscribe(listener: () => void): () => void {
-  listeners = [...listeners, listener];
-  // Also listen to cross-tab storage events
+  store.listeners = [...store.listeners, listener];
+  // Cross-tab sync: skip when a local flush is pending to avoid clobbering edits (FIX 2)
   const onStorage = (e: StorageEvent) => {
-    if (e.key === STORAGE_KEY) {
-      cache = null; // invalidate cache so getSnapshot re-reads
+    if (e.key === STORAGE_KEY && !store.flushTimer) {
+      store.cache = null; // invalidate cache so getSnapshot re-reads
       listener();
     }
   };
   window.addEventListener("storage", onStorage);
   return () => {
-    listeners = listeners.filter((l) => l !== listener);
+    store.listeners = store.listeners.filter((l) => l !== listener);
     window.removeEventListener("storage", onStorage);
   };
 }
 
 function getSnapshot(): AppState {
-  if (cache) return cache;
+  if (store.cache) return store.cache;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    cache = raw ? (JSON.parse(raw) as AppState) : emptyState();
+    store.cache = raw ? (JSON.parse(raw) as AppState) : emptyState();
   } catch {
-    cache = emptyState();
+    store.cache = emptyState();
   }
-  return cache;
+  return store.cache;
 }
 
 function getServerSnapshot(): AppState {
@@ -55,12 +68,26 @@ function getServerSnapshot(): AppState {
 
 /** Update state: sets in-memory cache immediately, debounces localStorage write. */
 function writeState(next: AppState) {
-  cache = next;
+  store.cache = next;
   emitChange();
-  if (flushTimer) clearTimeout(flushTimer);
-  flushTimer = setTimeout(() => {
+  if (store.flushTimer) clearTimeout(store.flushTimer);
+  store.flushTimer = setTimeout(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    store.flushTimer = null;
   }, DEBOUNCE_MS);
+}
+
+// Flush pending writes on tab close to prevent data loss (FIX 1)
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", () => {
+    if (store.flushTimer) {
+      clearTimeout(store.flushTimer);
+      store.flushTimer = null;
+      if (store.cache) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(store.cache));
+      }
+    }
+  });
 }
 
 export function useAppState() {
