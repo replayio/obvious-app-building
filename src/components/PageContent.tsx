@@ -9,7 +9,7 @@ interface PageContentProps {
   page: Page;
 }
 
-const VIEW_COMPONENTS: Record<Page["viewType"], React.ComponentType> = {
+const VIEW_COMPONENTS: Record<Page["viewType"], React.ComponentType<{ page: Page }>> = {
   "plain-text": PlainTextView,
   "rich-text": RichTextView,
   checklist: ChecklistView,
@@ -21,8 +21,8 @@ export function PageContent({ page }: PageContentProps) {
   const View = VIEW_COMPONENTS[page.viewType];
   return (
     <div className="flex flex-1 overflow-auto p-6">
-      <View />
+      {/* key resets view-local state when the active page changes */}
+      <View key={page.id} page={page} />
     </div>
   );
 }
-

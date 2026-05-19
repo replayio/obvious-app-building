@@ -40,7 +40,9 @@ export interface PlainTextContent {
 
 export interface RichTextContent {
   type: "rich-text";
-  json: unknown; // Tiptap JSONContent — typed properly when Tiptap is installed
+  // Stored as Tiptap JSONContent; `unknown` avoids coupling types to optional dep
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  json: Record<string, any> | null;
 }
 
 export interface ChecklistContent {
