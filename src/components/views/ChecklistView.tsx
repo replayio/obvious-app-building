@@ -178,44 +178,38 @@ export function ChecklistView({ page }: ChecklistViewProps) {
   const addItemAfter = useCallback(
     (afterId: string | null) => {
       const newItem: ChecklistItem = { id: nanoid(), text: "", checked: false };
-      setLocalItems((prev) => {
-        const next =
-          afterId === null
-            ? [...prev, newItem]
-            : (() => {
-                const idx = prev.findIndex((i) => i.id === afterId);
-                const copy = [...prev];
-                copy.splice(idx + 1, 0, newItem);
-                return copy;
-              })();
-        save(next);
-        return next;
-      });
-      // Focus the new input after render
+      // Compute next outside the updater so side effects can run in the same scope
+      const next =
+        afterId === null
+          ? [...localItems, newItem]
+          : (() => {
+              const idx = localItems.findIndex((i) => i.id === afterId);
+              const copy = [...localItems];
+              copy.splice(idx + 1, 0, newItem);
+              return copy;
+            })();
+      applyUpdate(next);
       requestAnimationFrame(() => {
         inputRefs.current.get(newItem.id)?.focus();
       });
     },
-    [save],
+    [localItems, applyUpdate],
   );
 
   const deleteItem = useCallback(
     (id: string) => {
-      setLocalItems((prev) => {
-        const idx = prev.findIndex((i) => i.id === id);
-        const next = prev.filter((i) => i.id !== id);
-        save(next);
-        // Move focus to previous item
-        const focusTarget = next[Math.max(0, idx - 1)];
-        if (focusTarget) {
-          requestAnimationFrame(() => {
-            inputRefs.current.get(focusTarget.id)?.focus();
-          });
-        }
-        return next;
-      });
+      // Compute next outside the updater so save() and focus rAF run in the same scope
+      const idx = localItems.findIndex((i) => i.id === id);
+      const next = localItems.filter((i) => i.id !== id);
+      applyUpdate(next);
+      const focusTarget = next[Math.max(0, idx - 1)];
+      if (focusTarget) {
+        requestAnimationFrame(() => {
+          inputRefs.current.get(focusTarget.id)?.focus();
+        });
+      }
     },
-    [save],
+    [localItems, applyUpdate],
   );
 
   const toggleItem = useCallback(
