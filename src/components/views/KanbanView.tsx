@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useLayoutEffect } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -332,6 +332,8 @@ export function KanbanView() {
 
   // Drag state — track what is currently being dragged
   const [activeId, setActiveId] = useState<string | null>(null);
+  // Always-current ref so drag handlers don't close over a stale columns snapshot
+  const columnsRef = useRef<KanbanColumn[]>([]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -343,12 +345,22 @@ export function KanbanView() {
     }),
   );
 
+  // Extract columns before guard so hooks run unconditionally (rules-of-hooks)
+  const columns =
+    activePage?.content.type === "kanban"
+      ? (activePage.content as KanbanContent).columns
+      : [];
+
+  // Keep the ref current so drag handlers always read fresh state
+  useLayoutEffect(() => {
+    columnsRef.current = columns;
+  });
+
   // Guard: only render when the active page has kanban content
   if (!activePage || activePage.content.type !== "kanban") {
     return null;
   }
 
-  const { columns } = activePage.content as KanbanContent;
   const pageId = activePage.id;
 
   // --- State mutation helpers ---
@@ -449,15 +461,22 @@ export function KanbanView() {
     // Only handle card-over-column or card-over-card (cross-column)
     if (!isCardId(activeStr)) return;
 
+    // Read fresh state — avoids stale-closure corruption on rapid fires
+    const currentColumns = columnsRef.current;
     const activeRawCard = stripPrefix(activeStr);
-    const sourceCol = findColumnOfCard(activeRawCard);
+    const sourceCol = currentColumns.find((c) =>
+      c.cards.some((card) => card.id === activeRawCard),
+    );
     if (!sourceCol) return;
 
     let targetColId: string;
     if (isColId(overStr)) {
       targetColId = stripPrefix(overStr);
     } else if (isCardId(overStr)) {
-      const targetCol = findColumnOfCard(stripPrefix(overStr));
+      const overRawCard = stripPrefix(overStr);
+      const targetCol = currentColumns.find((c) =>
+        c.cards.some((card) => card.id === overRawCard),
+      );
       if (!targetCol) return;
       targetColId = targetCol.id;
     } else {
@@ -467,9 +486,10 @@ export function KanbanView() {
     if (sourceCol.id === targetColId) return;
 
     // Move the card to the target column
-    const card = sourceCol.cards.find((c) => c.id === activeRawCard)!;
+    const card = sourceCol.cards.find((c) => c.id === activeRawCard);
+    if (!card) return;
     saveColumns(
-      columns.map((c) => {
+      currentColumns.map((c) => {
         if (c.id === sourceCol.id)
           return { ...c, cards: c.cards.filter((cd) => cd.id !== activeRawCard) };
         if (c.id === targetColId) return { ...c, cards: [...c.cards, card] };
@@ -485,11 +505,16 @@ export function KanbanView() {
     const activeStr = active.id as string;
     const overStr = over.id as string;
 
+    // Card dropped directly on a column container — onDragOver already moved it.
+    if (isCardId(activeStr) && isColId(overStr)) return;
+
+    const currentColumns = columnsRef.current;
+
     // Column reorder
     if (isColId(activeStr) && isColId(overStr)) {
-      const from = columns.findIndex((c) => c.id === stripPrefix(activeStr));
-      const to = columns.findIndex((c) => c.id === stripPrefix(overStr));
-      if (from !== to) saveColumns(arrayMove(columns, from, to));
+      const from = currentColumns.findIndex((c) => c.id === stripPrefix(activeStr));
+      const to = currentColumns.findIndex((c) => c.id === stripPrefix(overStr));
+      if (from !== to) saveColumns(arrayMove(currentColumns, from, to));
       return;
     }
 
@@ -497,13 +522,15 @@ export function KanbanView() {
     if (isCardId(activeStr) && isCardId(overStr)) {
       const activeRaw = stripPrefix(activeStr);
       const overRaw = stripPrefix(overStr);
-      const col = findColumnOfCard(activeRaw);
+      const col = currentColumns.find((c) =>
+        c.cards.some((card) => card.id === activeRaw),
+      );
       if (!col) return;
       const from = col.cards.findIndex((c) => c.id === activeRaw);
       const to = col.cards.findIndex((c) => c.id === overRaw);
       if (from !== to) {
         saveColumns(
-          columns.map((c) =>
+          currentColumns.map((c) =>
             c.id === col.id ? { ...c, cards: arrayMove(c.cards, from, to) } : c,
           ),
         );
