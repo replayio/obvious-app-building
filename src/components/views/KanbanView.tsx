@@ -1,6 +1,7 @@
 import { Columns3 } from "lucide-react";
+import type { Page } from "@/types";
 
-export function KanbanView() {
+export function KanbanView({ page: _ }: { page: Page }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
       <Columns3 className="h-10 w-10" />
@@ -9,4 +10,3 @@ export function KanbanView() {
     </div>
   );
 }
-
