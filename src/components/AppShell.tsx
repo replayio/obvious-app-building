@@ -58,7 +58,7 @@ export function AppShell() {
                 onRename={renamePage}
                 onChangeViewType={setViewType}
               />
-              <PageContent page={activePage} />
+              <PageContent key={activePage.id} page={activePage} />
             </>
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 text-muted-foreground">
