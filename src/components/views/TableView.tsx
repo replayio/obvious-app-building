@@ -43,6 +43,8 @@ function TableEditor({ page, updateContent }: TableEditorProps) {
 
   // Keyed by "rowId-colId" for Tab navigation
   const cellRefs = useRef<Map<string, HTMLInputElement>>(new Map());
+  // Set to true before clearing editTarget on Escape so onBlur knows to discard
+  const cancelEditRef = useRef(false);
 
   // ---- Sorted rows (UI-only, never persisted) ---------------------------
   const sortedRows: TableRow[] = sort
@@ -155,6 +157,10 @@ function TableEditor({ page, updateContent }: TableEditorProps) {
   }
 
   function commitHeaderEdit(col: TableColumn) {
+    if (cancelEditRef.current) {
+      cancelEditRef.current = false;
+      return; // discard — Escape was pressed
+    }
     renameColumn(col.id, draft.trim() || col.name);
     setEditTarget(null);
   }
@@ -213,7 +219,10 @@ function TableEditor({ page, updateContent }: TableEditorProps) {
                             e.preventDefault();
                             commitHeaderEdit(col);
                           }
-                          if (e.key === "Escape") setEditTarget(null);
+                          if (e.key === "Escape") {
+                            cancelEditRef.current = true;
+                            setEditTarget(null);
+                          }
                         }}
                       />
                     ) : (
