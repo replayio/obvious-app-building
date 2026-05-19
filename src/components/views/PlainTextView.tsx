@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Type } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAppState } from "@/hooks/useAppState";
-import type { Page, PlainTextContent } from "@/types";
+import type { Page } from "@/types";
 
 interface PlainTextViewProps {
   page: Page;
@@ -19,12 +19,10 @@ function countLines(text: string): number {
 export function PlainTextView({ page }: PlainTextViewProps) {
   const { updatePageContent } = useAppState();
 
-  // Narrow content type — page.viewType guarantees this shape.
-  const content = page.content as PlainTextContent;
-
-  // Local draft tracks the textarea value for instant feedback;
-  // changes propagate to the store (which debounces localStorage).
-  const [text, setText] = useState(content.text);
+  // Hooks must be called unconditionally; narrow content for the initial value.
+  const [text, setText] = useState(
+    page.content.type === "plain-text" ? page.content.text : "",
+  );
   const [monospace, setMonospace] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -52,6 +50,9 @@ export function PlainTextView({ page }: PlainTextViewProps) {
   }, [page.id, text]);
 
   const lineCount = countLines(text);
+
+  // Guard: this view should only render for plain-text pages.
+  if (page.content.type !== "plain-text") return null;
 
   return (
     <div className="flex w-full flex-1 flex-col">
