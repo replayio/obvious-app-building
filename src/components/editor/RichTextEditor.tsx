@@ -1,5 +1,4 @@
 import { useEffect, useRef } from 'react';
-import { TextSelection } from '@tiptap/pm/state';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
 import { FormattingToolbar } from './FormattingToolbar';
@@ -25,11 +24,6 @@ interface Props {
 }
 
 export function RichTextEditor({ content, onChange, placeholder }: Props) {
-  // Declare before useEditor so the onUpdate closure can reference it.
-  // Without this, every keystroke triggers setContent() via the useEffect below,
-  // resetting the cursor to the document end and splitting typed text.
-  const prevContentRef = useRef(content);
-
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
@@ -50,32 +44,14 @@ export function RichTextEditor({ content, onChange, placeholder }: Props) {
     content: (() => {
       try { return JSON.parse(content); } catch { return content; }
     })(),
-    onUpdate: ({ editor: e }) => {
-      const json = JSON.stringify(e.getJSON());
-      // Sync the ref before calling onChange so the content-sync useEffect sees
-      // matching values and skips setContent(). Without this guard, every
-      // keystroke resets the cursor to the document end via setContent().
-      prevContentRef.current = json;
-      onChange(json);
-    },
+    onUpdate: ({ editor: e }) => onChange(JSON.stringify(e.getJSON())),
     editorProps: {
       attributes: { class: 'prose prose-slate max-w-none focus:outline-none min-h-[400px] px-2 py-2' },
-      // Fix: triple-click in ProseMirror can produce an inverted selection where
-      // anchor is at the paragraph start but focus remains at the previous cursor
-      // position (document end). Intercept and constrain to the enclosing block.
-      handleTripleClick(view, pos) {
-        const { doc, tr } = view.state;
-        const $pos = doc.resolve(pos);
-        const start = $pos.start($pos.depth);
-        const end = $pos.end($pos.depth);
-        view.dispatch(tr.setSelection(TextSelection.create(doc, start, end)));
-        return true;
-      },
     },
   });
 
+  const prevContentRef = useRef(content);
   useEffect(() => {
-
     if (!editor) return;
     if (content !== prevContentRef.current) {
       prevContentRef.current = content;
