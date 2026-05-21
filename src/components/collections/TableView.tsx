@@ -131,8 +131,10 @@ function CellValue({ prop, value, teamMembers }: {
     );
   }
   if (prop.type === 'date') {
-    try { return <span className="text-sm text-gray-600">{new Date(String(value)).toLocaleDateString()}</span>; }
-    catch { return <span className="text-sm text-gray-600">{String(value)}</span>; }
+    let dateStr: string;
+    try { dateStr = new Date(String(value)).toLocaleDateString(); }
+    catch { dateStr = String(value); }
+    return <span className="text-sm text-gray-600">{dateStr}</span>;
   }
   if (prop.type === 'number') {
     return <span className="text-sm text-gray-700">{typeof value === 'number' ? value.toLocaleString() : String(value)}</span>;

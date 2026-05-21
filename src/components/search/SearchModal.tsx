@@ -92,7 +92,7 @@ export function SearchModal() {
                   const texts: string[] = [];
                   parsed.content?.forEach((node) => node.content?.forEach((child) => { if (child.text) texts.push(child.text); }));
                   preview = texts.join(' ').slice(0, 80);
-                } catch { preview = ''; }
+                } catch { /* preview stays '' */ }
 
                 return (
                   <button key={doc.id} onClick={() => handleSelectDoc(doc.id)} className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 transition-colors">

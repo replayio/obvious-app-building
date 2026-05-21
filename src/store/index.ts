@@ -154,8 +154,10 @@ export const useAppStore = create<AppState>()(
 
       deleteCollection: (id) => {
         set((state) => {
-          const { [id]: removed, ...rest } = state.collections;
-          return { collections: rest };
+          const collections = Object.fromEntries(
+            Object.entries(state.collections).filter(([key]) => key !== id)
+          ) as typeof state.collections;
+          return { collections };
         });
       },
 
@@ -208,8 +210,10 @@ export const useAppStore = create<AppState>()(
 
       removeTeamMember: (id) => {
         set((state) => {
-          const { [id]: removed, ...rest } = state.teamMembers;
-          return { teamMembers: rest };
+          const teamMembers = Object.fromEntries(
+            Object.entries(state.teamMembers).filter(([key]) => key !== id)
+          ) as typeof state.teamMembers;
+          return { teamMembers };
         });
       },
 
