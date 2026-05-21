@@ -16,6 +16,9 @@ dist-ssr
 .vscode/*
 !.vscode/extensions.json
 .idea
+playwright-screenshots/
+.netlify/
+
 .DS_Store
 *.suo
 *.ntvs*
