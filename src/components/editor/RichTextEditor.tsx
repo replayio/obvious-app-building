@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
+import { BubbleMenu } from '@tiptap/react/menus';
+import { FormattingToolbar } from './FormattingToolbar';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
@@ -63,6 +65,16 @@ export function RichTextEditor({ content, onChange, placeholder }: Props) {
 
   return (
     <div className="relative">
+      {editor && (
+        <BubbleMenu
+          editor={editor}
+          shouldShow={({ editor: ed, from, to }) =>
+            from !== to && !ed.isActive('image') && !ed.isActive('youtube')
+          }
+        >
+          <FormattingToolbar editor={editor} />
+        </BubbleMenu>
+      )}
       <EditorContent editor={editor} />
     </div>
   );
