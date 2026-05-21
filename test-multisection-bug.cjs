@@ -4,13 +4,67 @@
 // document end, so typed replacement text splits across paragraphs.
 
 const { chromium } = require('playwright');
+const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
 const SCREENSHOT_DIR = path.join(__dirname, 'playwright-screenshots', 'multisection');
-const BASE_URL = 'https://exquisite-piroshki-221a11.netlify.app';
+const PROJECT_ROOT = __dirname;
+
+/** Start `vite preview` and resolve with { server, baseUrl } when ready. */
+function startPreviewServer() {
+  return new Promise((resolve, reject) => {
+    const server = spawn('npm', ['run', 'preview'], {
+      cwd: PROJECT_ROOT,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true, // allows killing the entire process group
+    });
+
+    let settled = false;
+    const done = (err, result) => {
+      if (settled) return;
+      settled = true;
+      if (err) reject(err);
+      else resolve(result);
+    };
+
+    let stdoutBuf = '';
+    server.stdout.on('data', (d) => {
+      stdoutBuf += d.toString();
+      // Vite prints "Local:   http://localhost:PORT/" — capture it
+      const m = stdoutBuf.match(/Local:\s+(http:\/\/localhost:\d+)/);
+      if (m) done(null, { server, baseUrl: m[1] });
+    });
+    server.stderr.on('data', (d) => process.stderr.write(d));
+    server.on('error', (err) => done(err));
+    server.on('exit', (code) => {
+      if (!settled) done(new Error(`Preview server exited with code ${code}`));
+    });
+
+    // Safety timeout in case stdout line never arrives
+    setTimeout(() => done(new Error('Preview server did not start within 30s')), 30000);
+  });
+}
 
 async function run() {
+  console.log('\u{1F680} Starting vite preview server...');
+  const { server, baseUrl } = await startPreviewServer();
+  console.log(`\u2705 Preview server ready at ${baseUrl}\n`);
+
+  let exitCode = 0;
+  try {
+    await runTests(baseUrl);
+  } catch (err) {
+    console.error('Test error:', err);
+    exitCode = 1;
+  } finally {
+    console.log('\n\u{1F6D1} Stopping preview server...');
+    try { process.kill(-server.pid, 'SIGTERM'); } catch (_) { server.kill(); }
+    process.exit(exitCode);
+  }
+}
+
+async function runTests(BASE_URL) {
   fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
   const browser = await chromium.launch({ headless: true });
