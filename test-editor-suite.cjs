@@ -86,7 +86,7 @@ async function runScenario(browser, baseUrl, id, name, fn) {
     console.log('  \u2705  ' + label + ' PASS: ' + name);
   } catch (e) {
     status = 'FAIL';
-    notes  = e.message.split('\n')[0];
+    notes  = (e.stack || e.message);
     console.log('  \u274c  ' + label + ' FAIL: ' + name + '\n       ' + notes);
     const failShot = path.join(SCREENSHOT_DIR, label + '-fail.png');
     await page.screenshot({ path: failShot }).catch(() => {});
