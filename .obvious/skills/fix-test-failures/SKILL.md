@@ -185,6 +185,7 @@ Open artifact <ARTIFACT_ID> and extract for each failing scenario:
 - Scenario ID and name
 - Full error message + stack trace
 - Replay recording UUID (from the recording link)
+- Test file URL (raw GitHub URL to the test source file, if listed in the document)
 
 If there are more than <N> failures, process only the first <N> in document order.
 
@@ -199,7 +200,7 @@ RESPONSE=$(curl -s -X POST https://loop-qa.replay.io/api/v1/projects \
   -d '{
     "name": "<scenario id> — <short error description>",
     "recording_id": "<recording-uuid>",
-    "instructions": "Analyze this Replay recording of a failing automated test.\n\nError:\n<full error message and stack trace>\n\nExplain the root cause of the failure and what code change would fix it."
+    "instructions": "Analyze this Replay recording of a failing automated test.\n\nTest source:\n<raw URL to test file>\n\nError:\n<full error message and stack trace>\n\nExplain the root cause of the failure and what code change would fix it."
   }')
 
 PROJECT_ID=$(echo $RESPONSE | node -e \
