@@ -1,7 +1,12 @@
 // test-editor-suite.cjs
-// Scenario-based Playwright test suite for the TipTap rich-text editor.
-// Each scenario is a narrative user story covering multiple slash commands,
-// keyboard navigation, and content assertions.
+// 24-scenario Playwright test suite for the TipTap rich-text editor.
+// Requirements:
+//   - No arrow keys: cursor repositioning via mouse clicks only
+//   - Each scenario in its own BrowserContext
+//   - Screenshot per scenario to playwright-screenshots/suite/
+//   - All 13 slash commands covered: /heading1, /heading2, /heading3,
+//     /bullet, /numbered, /to-do, /quote, /code, /divider, /table,
+//     /youtube, /image, /callout
 
 'use strict';
 const { chromium } = require('playwright');
@@ -12,9 +17,9 @@ const fs           = require('fs');
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const EDITOR       = '.tiptap.ProseMirror';
+const EDITOR         = '.tiptap.ProseMirror';
 const SCREENSHOT_DIR = path.join(__dirname, 'playwright-screenshots', 'suite');
-const PROJECT_ROOT = __dirname;
+const PROJECT_ROOT   = __dirname;
 
 /** Accumulated results for the final table. */
 const results = [];
@@ -64,7 +69,7 @@ function startPreviewServer() {
  * Captures a screenshot after every scenario (pass or fail).
  */
 async function runScenario(browser, baseUrl, id, name, fn) {
-  const label = 'S' + id;
+  const label = 'S' + String(id).padStart(2, '0');
   console.log('  \u23f3  ' + label + ': ' + name);
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page    = await context.newPage();
@@ -87,7 +92,8 @@ async function runScenario(browser, baseUrl, id, name, fn) {
     await page.screenshot({ path: failShot }).catch(() => {});
   }
 
-  const shotPath = path.join(SCREENSHOT_DIR, label + '-' + name.replace(/[^a-z0-9]/gi, '-').toLowerCase() + '.png');
+  const slug     = name.replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
+  const shotPath = path.join(SCREENSHOT_DIR, label + '-' + slug + '.png');
   await page.screenshot({ path: shotPath }).catch(() => {});
 
   results.push({ id, name, status, notes });
@@ -98,42 +104,80 @@ async function runScenario(browser, baseUrl, id, name, fn) {
 // Page helpers
 // ---------------------------------------------------------------------------
 
-/** Clear the editor with Ctrl+A then Delete. */
+/** Clear the editor with Ctrl+A then Backspace. */
 async function clearEditor(page) {
   const editor = page.locator(EDITOR);
   await editor.click();
+  await page.waitForTimeout(150);
   await page.keyboard.press('Control+A');
-  await page.keyboard.press('Delete');
+  await page.keyboard.press('Backspace');
   await page.waitForTimeout(200);
 }
 
 /**
- * Type a slash command query, wait for the popup, then click the item
- * whose text includes itemLabel.
+ * Type a slash command query, wait for the popup, then click the matching
+ * item. Uses exact regexp match first, falls back to hasText.
  */
 async function slashCmd(page, query, itemLabel) {
   await page.keyboard.type(query, { delay: 30 });
-  await page.waitForSelector('[data-tippy-root] button, .tippy-box button', { state: 'visible' });
-  const btn = page.locator('[data-tippy-root] button, .tippy-box button').filter({ hasText: itemLabel }).first();
-  await btn.waitFor({ state: 'visible' });
+  await page.waitForSelector('[data-tippy-root] button, .tippy-box button', {
+    state: 'visible',
+    timeout: 6000,
+  });
+  await page.waitForTimeout(150);
+  const popup   = page.locator('[data-tippy-root] button, .tippy-box button');
+  const exact   = popup.filter({ hasText: new RegExp('^' + itemLabel + '$') }).first();
+  const hasText = popup.filter({ hasText: itemLabel }).first();
+  const btn     = (await exact.count()) > 0 ? exact : hasText;
+  await btn.waitFor({ state: 'visible', timeout: 6000 });
   await btn.click();
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(400); // allow TipTap to commit node insertion
 }
 
 /** Read the editor visible text content. */
 async function editorText(page) {
-  return page.evaluate(function(sel) { return document.querySelector(sel).innerText; }, EDITOR);
+  return page.evaluate(
+    (sel) => document.querySelector(sel).innerText,
+    EDITOR,
+  );
+}
+
+/**
+ * Click the centre of the element whose innerText contains `needle`.
+ * Uses TreeWalker to find the text node, then getBoundingClientRect
+ * on its parent element to compute the click coordinates.
+ */
+async function clickOnText(page, needle) {
+  const found = await page.evaluate(
+    ([sel, n]) => {
+      const walker = document.createTreeWalker(
+        document.querySelector(sel),
+        NodeFilter.SHOW_TEXT,
+      );
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (node.textContent.includes(n)) {
+          const range = document.createRange();
+          range.selectNodeContents(node.parentElement);
+          const rect = range.getBoundingClientRect();
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        }
+      }
+      return null;
+    },
+    [EDITOR, needle],
+  );
+  if (!found) throw new Error('clickOnText: "' + needle + '" not found in editor');
+  await page.mouse.click(found.x, found.y);
+  await page.waitForTimeout(200);
 }
 
 // ---------------------------------------------------------------------------
 // Scenarios
 // ---------------------------------------------------------------------------
 
-/**
- * S1: Write a structured document
- * Covers: /heading2
- */
-async function scenario1(page) {
+// S01 — /heading2: two H2 sections, mouse repositioning to append text
+async function scenario01(page) {
   const editor = page.locator(EDITOR);
   await editor.click();
 
@@ -143,7 +187,7 @@ async function scenario1(page) {
   await slashCmd(page, '/Heading', 'Heading 2');
   await page.keyboard.type('Introduction', { delay: 25 });
   await page.keyboard.press('Enter');
-  await page.keyboard.type('This is the intro paragraph. It covers the basics.', { delay: 25 });
+  await page.keyboard.type('This is the intro paragraph.', { delay: 25 });
 
   await page.keyboard.press('Enter');
   await slashCmd(page, '/Heading', 'Heading 2');
@@ -151,29 +195,24 @@ async function scenario1(page) {
   await page.keyboard.press('Enter');
   await page.keyboard.type('Here are the details.', { delay: 25 });
 
-  // Navigate back up to the Introduction paragraph
-  for (var i = 0; i < 3; i++) await page.keyboard.press('ArrowUp');
+  await clickOnText(page, 'This is the intro paragraph.');
   await page.keyboard.press('End');
-  await page.keyboard.type(' Extra content added.', { delay: 25 });
+  await page.keyboard.type(' Extra content.', { delay: 25 });
 
   await page.waitForTimeout(400);
   const text = await editorText(page);
-
   if (!text.includes('Introduction'))
     throw new Error('Introduction heading missing. Got: ' + text);
-  if (!text.includes('This is the intro paragraph. It covers the basics. Extra content added.'))
-    throw new Error('Intro paragraph missing appended text. Got: ' + text);
+  if (!text.includes('This is the intro paragraph. Extra content.'))
+    throw new Error('Appended intro text missing. Got: ' + text);
   if (!text.includes('Details'))
     throw new Error('Details heading missing. Got: ' + text);
   if (!text.includes('Here are the details.'))
     throw new Error('Details paragraph missing. Got: ' + text);
 }
 
-/**
- * S2: Build a list document
- * Covers: /bullet
- */
-async function scenario2(page) {
+// S02 — /bullet: create list, mouse-click to replace one item
+async function scenario02(page) {
   const editor = page.locator(EDITOR);
   await editor.click();
 
@@ -186,46 +225,424 @@ async function scenario2(page) {
   await page.keyboard.type('Bananas', { delay: 25 });
   await page.keyboard.press('Enter');
   await page.keyboard.type('Cherries', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Dates', { delay: 25 });
 
-  // Go back to Bananas, clear it, type Blueberries
-  await page.keyboard.press('ArrowUp');
+  await clickOnText(page, 'Bananas');
   await page.keyboard.press('Home');
   await page.keyboard.down('Shift');
   await page.keyboard.press('End');
   await page.keyboard.up('Shift');
-  await page.keyboard.press('Delete');
+  await page.keyboard.press('Backspace');
   await page.keyboard.type('Blueberries', { delay: 25 });
-
-  // Go to Cherries and add Dates after it
-  await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('End');
-  await page.keyboard.press('Enter');
-  await page.keyboard.type('Dates', { delay: 25 });
 
   await page.waitForTimeout(400);
   const text = await editorText(page);
-
   if (!text.includes('Apples'))      throw new Error('Apples missing');
-  if (!text.includes('Blueberries')) throw new Error('Bananas should have been replaced');
+  if (!text.includes('Blueberries')) throw new Error('Blueberries (replacement) missing');
   if (text.includes('Bananas'))      throw new Error('Bananas still present after replacement');
   if (!text.includes('Cherries'))    throw new Error('Cherries missing');
   if (!text.includes('Dates'))       throw new Error('Dates missing');
 
-  const items = await page.evaluate(function(sel) {
-    return Array.from(document.querySelectorAll(sel + ' ul li')).map(function(li) { return li.innerText.trim(); });
-  }, EDITOR);
+  const items = await page.evaluate(
+    (sel) => Array.from(document.querySelectorAll(sel + ' ul li')).map((li) => li.innerText.trim()),
+    EDITOR,
+  );
   const expected = ['Apples', 'Blueberries', 'Cherries', 'Dates'];
-  for (var i = 0; i < expected.length; i++) {
+  for (let i = 0; i < expected.length; i++) {
     if (!items[i] || !items[i].includes(expected[i]))
-      throw new Error('List item ' + (i+1) + ': expected "' + expected[i] + '", got "' + items[i] + '"');
+      throw new Error('List item ' + (i + 1) + ': expected "' + expected[i] + '", got "' + (items[i] || '') + '"');
   }
 }
 
-/**
- * S3: Mixed content — headings, todo, divider, numbered list
- * Covers: /heading1, /to-do, /divider, /numbered
- */
-async function scenario3(page) {
+// S03 — /numbered: 4 steps, mouse-click to append to step 2
+async function scenario03(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await page.keyboard.type('Procedure', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Numbered', 'Numbered List');
+  await page.keyboard.type('Install dependencies', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Configure environment', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Build project', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Run tests', { delay: 25 });
+
+  await clickOnText(page, 'Configure environment');
+  await page.keyboard.press('End');
+  await page.keyboard.type(' variables', { delay: 25 });
+
+  await page.waitForTimeout(400);
+  const items = await page.evaluate(
+    (sel) => Array.from(document.querySelectorAll(sel + ' ol li')).map((li) => li.innerText.trim()),
+    EDITOR,
+  );
+  if (items.length < 4) throw new Error('Expected 4 list items, got ' + items.length);
+  if (!items.some((i) => i.includes('Configure environment variables')))
+    throw new Error('Edited item missing " variables". Got: ' + items.join(', '));
+  if (!items.some((i) => i.includes('Run tests')))
+    throw new Error('"Run tests" missing. Got: ' + items.join(', '));
+}
+
+// S04 — /to-do: 3 tasks, check one checkbox, mouse-edit another task
+async function scenario04(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await page.keyboard.type('Sprint Tasks', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/To-do', 'To-do List');
+  await page.keyboard.type('Write tests', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Fix bug', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Ship feature', { delay: 25 });
+
+  await page.waitForTimeout(400);
+
+  const checkbox = page.locator(EDITOR + ' input[type="checkbox"]').first();
+  if (await checkbox.count() > 0) {
+    await checkbox.click();
+    await page.waitForTimeout(300);
+  }
+
+  await clickOnText(page, 'Fix bug');
+  await page.keyboard.press('End');
+  await page.keyboard.type(' #42', { delay: 25 });
+
+  await page.waitForTimeout(400);
+  const text = await editorText(page);
+  if (!text.includes('Write tests'))  throw new Error('"Write tests" missing');
+  if (!text.includes('Fix bug #42'))  throw new Error('"Fix bug #42" missing');
+  if (!text.includes('Ship feature')) throw new Error('"Ship feature" missing');
+
+  const count = await page.locator(
+    EDITOR + ' input[type="checkbox"], ' + EDITOR + ' [data-type="taskItem"]',
+  ).count();
+  if (count < 3) throw new Error('Expected >=3 todo items, got ' + count);
+}
+
+// S05 — /heading1: article with H1 title, mouse-click to append to paragraph
+async function scenario05(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await slashCmd(page, '/Heading', 'Heading 1');
+  await page.keyboard.type('Annual Report', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Our company achieved record results this year.', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Revenue grew by 42%.', { delay: 25 });
+
+  await clickOnText(page, 'Our company achieved record results this year.');
+  await page.keyboard.press('End');
+  await page.keyboard.type(' Highlights follow.', { delay: 25 });
+
+  await page.waitForTimeout(400);
+  const h1 = await page.locator(EDITOR + ' h1').count();
+  if (h1 === 0) throw new Error('h1 not found');
+  const h1Text = await page.locator(EDITOR + ' h1').first().innerText();
+  if (!h1Text.includes('Annual Report')) throw new Error('h1 text wrong: ' + h1Text);
+
+  const text = await editorText(page);
+  if (!text.includes('Our company achieved record results this year. Highlights follow.'))
+    throw new Error('Appended text missing. Got: ' + text);
+  if (!text.includes('Revenue grew by 42%.'))
+    throw new Error('Second paragraph missing. Got: ' + text);
+}
+
+// S06 — /heading3: H1 > H2 > H3 hierarchy, mouse-click to rename H3
+async function scenario06(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await slashCmd(page, '/Heading', 'Heading 1');
+  await page.keyboard.type('Architecture', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Heading', 'Heading 2');
+  await page.keyboard.type('Frontend', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Heading', 'Heading 3');
+  await page.keyboard.type('Components', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('React components live here.', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Heading', 'Heading 2');
+  await page.keyboard.type('Backend', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Heading', 'Heading 3');
+  await page.keyboard.type('Services', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('API services live here.', { delay: 25 });
+
+  await clickOnText(page, 'Components');
+  await page.keyboard.press('End');
+  await page.keyboard.type(' Layer', { delay: 25 });
+
+  await page.waitForTimeout(400);
+  const h1Count = await page.locator(EDITOR + ' h1').count();
+  const h2Count = await page.locator(EDITOR + ' h2').count();
+  const h3Count = await page.locator(EDITOR + ' h3').count();
+  if (h1Count === 0) throw new Error('h1 missing');
+  if (h2Count < 2)   throw new Error('Expected >=2 h2, got ' + h2Count);
+  if (h3Count < 2)   throw new Error('Expected >=2 h3, got ' + h3Count);
+
+  const h3Texts = await page.locator(EDITOR + ' h3').allInnerTexts();
+  if (!h3Texts.some((t) => t.includes('Components Layer')))
+    throw new Error('Edited H3 "Components Layer" not found. Got: ' + h3Texts);
+}
+
+// S07 — /divider: text before and after, assert <hr> present
+async function scenario07(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await page.keyboard.type('Before the break', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Divider', 'Divider');
+  await page.waitForTimeout(300);
+
+  const editorBox = await page.locator(EDITOR).boundingBox();
+  await page.mouse.click(editorBox.x + editorBox.width / 2, editorBox.y + editorBox.height - 30);
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('After the break', { delay: 25 });
+
+  await page.waitForTimeout(400);
+  const hrCount = await page.locator(EDITOR + ' hr').count();
+  if (hrCount === 0) throw new Error('Divider <hr> not found');
+
+  const text = await editorText(page);
+  if (!text.includes('Before the break')) throw new Error('"Before the break" missing');
+  if (!text.includes('After the break'))  throw new Error('"After the break" missing');
+}
+
+// S08 — /quote: create blockquote, mouse-click to add attribution
+async function scenario08(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await page.keyboard.type('Famous Quotes', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Quote', 'Quote');
+  await page.keyboard.type('The best code is no code at all.', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Second paragraph after the quote.', { delay: 25 });
+
+  await clickOnText(page, 'The best code is no code at all.');
+  await page.keyboard.press('End');
+  await page.keyboard.type(' -- Jeff Atwood', { delay: 25 });
+
+  await page.waitForTimeout(400);
+  const bqContent = await page.evaluate(
+    (sel) => { const bq = document.querySelector(sel + ' blockquote'); return bq ? bq.innerText : ''; },
+    EDITOR,
+  );
+  if (!bqContent.includes('The best code is no code at all. -- Jeff Atwood'))
+    throw new Error('Blockquote content wrong. Got: ' + bqContent);
+
+  const text = await editorText(page);
+  if (!text.includes('Second paragraph after the quote.'))
+    throw new Error('Paragraph after quote missing. Got: ' + text);
+}
+
+// S09 — /code: multi-line code block, mouse-click first line to add comment
+async function scenario09(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await page.keyboard.type('Code Sample', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Code', 'Code Block');
+  await page.waitForTimeout(300);
+
+  const codeBlock = page.locator(EDITOR + ' pre').first();
+  await codeBlock.click();
+  await page.waitForTimeout(200);
+
+  await page.keyboard.type('const x = 1;', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('const y = 2;', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('console.log(x + y);', { delay: 25 });
+
+  await clickOnText(page, 'const x = 1;');
+  await page.keyboard.press('End');
+  await page.keyboard.type(' // initial value', { delay: 25 });
+
+  await page.waitForTimeout(400);
+  const codeContent = await page.evaluate(
+    (sel) => { const pre = document.querySelector(sel + ' pre'); return pre ? pre.innerText : ''; },
+    EDITOR,
+  );
+  if (!codeContent.includes('const x = 1; // initial value'))
+    throw new Error('Edited code line 1 missing. Got: ' + codeContent);
+  if (!codeContent.includes('const y = 2;'))
+    throw new Error('Code line 2 missing. Got: ' + codeContent);
+  if (!codeContent.includes('console.log(x + y);'))
+    throw new Error('Code line 3 missing. Got: ' + codeContent);
+}
+
+// S10 — /callout: insert callout, mouse-append text
+async function scenario10(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await page.keyboard.type('Notes', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Callout', 'Callout');
+  await page.keyboard.type('Pay attention to this detail.', { delay: 25 });
+
+  await page.waitForTimeout(400);
+  const text = await editorText(page);
+  if (!text.includes('Pay attention to this detail.'))
+    throw new Error('Callout text missing. Got: ' + text);
+
+  await clickOnText(page, 'Pay attention to this detail.');
+  await page.keyboard.press('End');
+  await page.keyboard.type(' It is critical.', { delay: 25 });
+
+  await page.waitForTimeout(300);
+  const updatedText = await editorText(page);
+  if (!updatedText.includes('Pay attention to this detail. It is critical.'))
+    throw new Error('Appended callout text missing. Got: ' + updatedText);
+}
+
+// S11 — /table: fill header + 2 rows via Tab, mouse-click to edit a cell
+async function scenario11(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await page.keyboard.type('Score Board', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Table', 'Table');
+  await page.waitForTimeout(500);
+
+  const firstTh = page.locator(EDITOR + ' th').first();
+  await firstTh.scrollIntoViewIfNeeded();
+  await firstTh.click();
+  await page.waitForTimeout(250);
+
+  await page.keyboard.insertText('Player');
+  await page.keyboard.press('Tab');
+  await page.keyboard.insertText('Score');
+  await page.keyboard.press('Tab');
+  await page.keyboard.insertText('Rank');
+  await page.keyboard.press('Tab');
+
+  await page.keyboard.insertText('Alice');
+  await page.keyboard.press('Tab');
+  await page.keyboard.insertText('95');
+  await page.keyboard.press('Tab');
+  await page.keyboard.insertText('1');
+  await page.keyboard.press('Tab');
+
+  await page.keyboard.insertText('Bob');
+  await page.keyboard.press('Tab');
+  await page.keyboard.insertText('82');
+  await page.keyboard.press('Tab');
+  await page.keyboard.insertText('2');
+
+  const scoreTd = page.locator(EDITOR + ' td').nth(1);
+  await scoreTd.scrollIntoViewIfNeeded();
+  await scoreTd.click();
+  await page.waitForTimeout(250);
+  await page.keyboard.press('Control+A');
+  await page.keyboard.press('Backspace');
+  await page.keyboard.insertText('98');
+
+  await page.waitForTimeout(400);
+  const headers = await page.evaluate(
+    (sel) => Array.from(document.querySelectorAll(sel + ' th')).map((c) => c.textContent.trim()),
+    EDITOR,
+  );
+  if (!headers.some((h) => h.includes('Player'))) throw new Error('Header "Player" missing. Got: ' + headers);
+  if (!headers.some((h) => h.includes('Score')))  throw new Error('Header "Score" missing. Got: ' + headers);
+  if (!headers.some((h) => h.includes('Rank')))   throw new Error('Header "Rank" missing. Got: ' + headers);
+
+  const cells = await page.evaluate(
+    (sel) => Array.from(document.querySelectorAll(sel + ' td')).map((c) => c.textContent.trim()),
+    EDITOR,
+  );
+  const flat = cells.join(' ');
+  if (!flat.includes('Alice')) throw new Error('"Alice" missing. cells: ' + flat);
+  if (!flat.includes('98'))    throw new Error('Updated score "98" missing. cells: ' + flat);
+  if (!flat.includes('Bob'))   throw new Error('"Bob" missing. cells: ' + flat);
+}
+
+// S12 — /youtube: override window.prompt, assert iframe with youtube src
+async function scenario12(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await page.keyboard.type('Video Section', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await page.evaluate(() => {
+    window.prompt = () => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+  });
+
+  await slashCmd(page, '/YouTube', 'YouTube');
+  await page.waitForTimeout(1000);
+
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Classic video above.', { delay: 25 });
+
+  await page.waitForTimeout(400);
+  const iframeCount = await page.evaluate(
+    (sel) => Array.from(document.querySelectorAll(sel + ' iframe'))
+      .filter((f) => f.src && f.src.includes('youtube')).length,
+    EDITOR,
+  );
+  if (iframeCount === 0) throw new Error('YouTube iframe not found');
+
+  const text = await editorText(page);
+  if (!text.includes('Classic video above.')) throw new Error('Caption after iframe missing');
+}
+
+// S13 — /image: override window.prompt, assert <img> tag in editor
+async function scenario13(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await page.keyboard.type('Image Gallery', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await page.evaluate(() => {
+    window.prompt = () => 'https://placekitten.com/400/300';
+  });
+
+  await slashCmd(page, '/Image', 'Image');
+  await page.waitForTimeout(800);
+
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('A kitten above.', { delay: 25 });
+
+  await page.waitForTimeout(400);
+  const imgCount = await page.locator(EDITOR + ' img').count();
+  if (imgCount === 0) throw new Error('Image tag not found in editor');
+
+  const text = await editorText(page);
+  if (!text.includes('A kitten above.')) throw new Error('Caption after image missing');
+}
+
+// S14 — /heading1 + /bullet + /divider + /numbered combo, mouse fix bullet
+async function scenario14(page) {
   const editor = page.locator(EDITOR);
   await editor.click();
 
@@ -233,15 +650,21 @@ async function scenario3(page) {
   await page.keyboard.type('Project Plan', { delay: 25 });
   await page.keyboard.press('Enter');
 
-  await slashCmd(page, '/To-do', 'To-do List');
-  await page.keyboard.type('Research phase', { delay: 25 });
+  await slashCmd(page, '/Bullet', 'Bullet List');
+  await page.keyboard.type('Research', { delay: 25 });
   await page.keyboard.press('Enter');
-  await page.keyboard.type('Design phase', { delay: 25 });
+  await page.keyboard.type('Design', { delay: 25 });
   await page.keyboard.press('Enter');
-  await page.keyboard.type('Build phase', { delay: 25 });
+  await page.keyboard.type('Build', { delay: 25 });
   await page.keyboard.press('Enter');
+  await page.keyboard.press('Backspace');
 
   await slashCmd(page, '/Divider', 'Divider');
+  await page.waitForTimeout(300);
+
+  const editorBox = await page.locator(EDITOR).boundingBox();
+  await page.mouse.click(editorBox.x + editorBox.width / 2, editorBox.y + editorBox.height - 30);
+  await page.waitForTimeout(200);
   await page.keyboard.press('Enter');
 
   await slashCmd(page, '/Numbered', 'Numbered List');
@@ -251,334 +674,532 @@ async function scenario3(page) {
   await page.keyboard.press('Enter');
   await page.keyboard.type('Step three', { delay: 25 });
 
-  // Navigate up to Design phase todo (5 ArrowUps)
-  for (var i = 0; i < 5; i++) await page.keyboard.press('ArrowUp');
+  await clickOnText(page, 'Design');
   await page.keyboard.press('Home');
   await page.keyboard.down('Shift');
   await page.keyboard.press('End');
   await page.keyboard.up('Shift');
-  await page.keyboard.press('Delete');
-  await page.keyboard.type('Design & prototype phase', { delay: 25 });
+  await page.keyboard.press('Backspace');
+  await page.keyboard.type('Design and prototype', { delay: 25 });
 
   await page.waitForTimeout(400);
-
-  const h1Count = await page.locator(EDITOR + ' h1').count();
-  if (h1Count === 0) throw new Error('h1 not found');
-
-  const checkboxCount = await page.locator(EDITOR + ' input[type="checkbox"], ' + EDITOR + ' [data-type="taskItem"]').count();
-  if (checkboxCount < 3) throw new Error('Expected 3 todo items, got ' + checkboxCount);
-
-  const hrCount = await page.locator(EDITOR + ' hr').count();
-  if (hrCount === 0) throw new Error('Divider (hr) not found');
-
-  const liCount = await page.locator(EDITOR + ' ol li').count();
-  if (liCount < 3) throw new Error('numbered ' + liCount + ' missing');
+  if (await page.locator(EDITOR + ' h1').count() === 0) throw new Error('h1 not found');
+  if (await page.locator(EDITOR + ' ul li').count() < 3) throw new Error('Expected >=3 bullet items');
+  if (await page.locator(EDITOR + ' hr').count() === 0) throw new Error('Divider <hr> not found');
+  if (await page.locator(EDITOR + ' ol li').count() < 3) throw new Error('Expected >=3 numbered items');
 
   const text = await editorText(page);
-  if (!text.includes('Design & prototype phase'))
-    throw new Error('Edited todo item missing. Got: ' + text);
+  if (!text.includes('Design and prototype'))
+    throw new Error('Edited bullet item missing. Got: ' + text);
 }
 
-/**
- * S4: Code and quote blocks
- * Covers: /code, /quote
- */
-async function scenario4(page) {
+// S15 — /heading2 + /code + /quote, mouse reposition between blocks
+async function scenario15(page) {
   const editor = page.locator(EDITOR);
   await editor.click();
 
+  await slashCmd(page, '/Heading', 'Heading 2');
   await page.keyboard.type('Technical Notes', { delay: 25 });
   await page.keyboard.press('Enter');
 
   await slashCmd(page, '/Code', 'Code Block');
   await page.waitForTimeout(300);
 
-  // Click inside code block to ensure focus
   const codeBlock = page.locator(EDITOR + ' pre').first();
   await codeBlock.click();
-  await page.keyboard.type('const x = 42;', { delay: 25 });
-  await page.keyboard.press('Enter');
-  await page.keyboard.type("function hello() { return 'world'; }", { delay: 25 });
+  await page.waitForTimeout(200);
+  await page.keyboard.insertText('function greet(name) {\n  return name;\n}');
 
-  // Exit code block
   await page.keyboard.press('Escape');
-  await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
 
   await slashCmd(page, '/Quote', 'Quote');
-  await page.keyboard.type('The best code is no code at all.', { delay: 25 });
+  await page.keyboard.type('Simplicity is the soul of efficiency.', { delay: 25 });
 
-  // Go back into code block for a third line
-  await page.keyboard.press('ArrowUp');
-  await page.keyboard.press('ArrowUp');
+  await clickOnText(page, 'function greet(name)');
   await page.keyboard.press('End');
   await page.keyboard.press('Enter');
-  await page.keyboard.type('const y = x * 2;', { delay: 25 });
+  await page.keyboard.insertText('console.log(greet("World"));');
 
   await page.waitForTimeout(400);
+  const codeContent = await page.evaluate(
+    (sel) => { const pre = document.querySelector(sel + ' pre'); return pre ? pre.innerText : ''; },
+    EDITOR,
+  );
+  if (!codeContent.includes('function greet'))
+    throw new Error('Function definition missing. Got: ' + codeContent);
+  if (!codeContent.includes('console.log(greet'))
+    throw new Error('Added call site missing. Got: ' + codeContent);
 
-  const codeContent = await page.evaluate(function(sel) {
-    var pre = document.querySelector(sel + ' pre');
-    return pre ? pre.innerText : '';
-  }, EDITOR);
-  if (!codeContent.includes('const x = 42;'))
-    throw new Error('Code line 1 missing. code block: ' + codeContent);
-  if (!codeContent.includes('hello'))
-    throw new Error('Code line 2 missing. code block: ' + codeContent);
-  if (!codeContent.includes('const y = x * 2;'))
-    throw new Error('Code line 3 missing. code block: ' + codeContent);
-
-  const quoteContent = await page.evaluate(function(sel) {
-    var bq = document.querySelector(sel + ' blockquote');
-    return bq ? bq.innerText : '';
-  }, EDITOR);
-  if (!quoteContent.includes('The best code is no code at all.'))
-    throw new Error('Blockquote missing expected text. Got: ' + quoteContent);
+  const bqContent = await page.evaluate(
+    (sel) => { const bq = document.querySelector(sel + ' blockquote'); return bq ? bq.innerText : ''; },
+    EDITOR,
+  );
+  if (!bqContent.includes('Simplicity is the soul of efficiency.'))
+    throw new Error('Quote text wrong. Got: ' + bqContent);
 }
 
-/**
- * S5: Table editing
- * Covers: /table
- */
-async function scenario5(page) {
+// S16 — /heading2 + /to-do + /numbered: task hierarchy doc
+async function scenario16(page) {
   const editor = page.locator(EDITOR);
   await editor.click();
 
-  await page.keyboard.type('Data Table', { delay: 25 });
+  await slashCmd(page, '/Heading', 'Heading 2');
+  await page.keyboard.type('This Week', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/To-do', 'To-do List');
+  await page.keyboard.type('Morning standup', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Review pull requests', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Deploy to staging', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Backspace');
+
+  await slashCmd(page, '/Heading', 'Heading 2');
+  await page.keyboard.type('Action Items', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Numbered', 'Numbered List');
+  await page.keyboard.type('Write changelog', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Update docs', { delay: 25 });
+
+  await clickOnText(page, 'Deploy to staging');
+  await page.keyboard.press('End');
+  await page.keyboard.type(' (!)', { delay: 25 });
+
+  await page.waitForTimeout(400);
+  const text = await editorText(page);
+  if (!text.includes('Deploy to staging (!)')) throw new Error('Edited todo item missing. Got: ' + text);
+  if (!text.includes('Write changelog'))        throw new Error('"Write changelog" missing');
+  if (!text.includes('Update docs'))            throw new Error('"Update docs" missing');
+
+  const h2Count = await page.locator(EDITOR + ' h2').count();
+  if (h2Count < 2) throw new Error('Expected >=2 h2 headings, got ' + h2Count);
+}
+
+// S17 — /callout + /heading1 + /bullet: callout banner, mouse edit callout
+async function scenario17(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await slashCmd(page, '/Callout', 'Callout');
+  await page.keyboard.type('Draft document do not share.', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Heading', 'Heading 1');
+  await page.keyboard.type('Q3 Strategy', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Bullet', 'Bullet List');
+  await page.keyboard.type('Expand market share', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Reduce churn', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Launch new features', { delay: 25 });
+
+  await clickOnText(page, 'Draft document do not share.');
+  await page.keyboard.press('Home');
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('End');
+  await page.keyboard.up('Shift');
+  await page.keyboard.press('Backspace');
+  await page.keyboard.type('Internal only do not share externally.', { delay: 25 });
+
+  await page.waitForTimeout(400);
+  if (await page.locator(EDITOR + ' h1').count() === 0) throw new Error('h1 missing');
+
+  const text = await editorText(page);
+  if (!text.includes('Internal only')) throw new Error('Edited callout text missing. Got: ' + text);
+  if (!text.includes('Q3 Strategy'))   throw new Error('H1 text missing');
+  if (!text.includes('Reduce churn'))  throw new Error('"Reduce churn" missing');
+}
+
+// S18 — /table: 3 data rows, mouse-click to update a row 2 cell
+async function scenario18(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await page.keyboard.type('Inventory', { delay: 25 });
   await page.keyboard.press('Enter');
 
   await slashCmd(page, '/Table', 'Table');
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(500);
 
-  // Click first header cell explicitly before typing
   const firstTh = page.locator(EDITOR + ' th').first();
   await firstTh.scrollIntoViewIfNeeded();
   await firstTh.click();
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(250);
 
-  // Use insertText for reliable TipTap cell input in headless mode
-  await page.keyboard.insertText('Name');
+  await page.keyboard.insertText('Item');
   await page.keyboard.press('Tab');
-  await page.keyboard.insertText('Score');
+  await page.keyboard.insertText('Qty');
   await page.keyboard.press('Tab');
-  await page.keyboard.insertText('Grade');
-  await page.keyboard.press('Tab');
-
-  await page.keyboard.insertText('Alice');
-  await page.keyboard.press('Tab');
-  await page.keyboard.insertText('95');
-  await page.keyboard.press('Tab');
-  await page.keyboard.insertText('A');
+  await page.keyboard.insertText('Price');
   await page.keyboard.press('Tab');
 
-  await page.keyboard.insertText('Bob');
+  await page.keyboard.insertText('Widget A');
   await page.keyboard.press('Tab');
-  await page.keyboard.insertText('82');
+  await page.keyboard.insertText('10');
   await page.keyboard.press('Tab');
-  await page.keyboard.insertText('B');
+  await page.keyboard.insertText('5.00');
+  await page.keyboard.press('Tab');
 
-  // Click Alice Score cell (td index 1) and update to 97
-  const scoreTd = page.locator(EDITOR + ' td').nth(1);
-  await scoreTd.scrollIntoViewIfNeeded();
-  await scoreTd.click();
-  await page.waitForTimeout(200);
+  await page.keyboard.insertText('Widget B');
+  await page.keyboard.press('Tab');
+  await page.keyboard.insertText('20');
+  await page.keyboard.press('Tab');
+  await page.keyboard.insertText('3.50');
+  await page.keyboard.press('Tab');
+
+  await page.keyboard.insertText('Widget C');
+  await page.keyboard.press('Tab');
+  await page.keyboard.insertText('5');
+  await page.keyboard.press('Tab');
+  await page.keyboard.insertText('12.00');
+
+  const qtyTd = page.locator(EDITOR + ' td').nth(3);
+  await qtyTd.scrollIntoViewIfNeeded();
+  await qtyTd.click();
+  await page.waitForTimeout(250);
   await page.keyboard.press('Control+A');
   await page.keyboard.press('Backspace');
-  await page.keyboard.insertText('97');
+  await page.keyboard.insertText('25');
 
   await page.waitForTimeout(400);
-
-  const headers = await page.evaluate(function(sel) {
-    return Array.from(document.querySelectorAll(sel + ' th')).map(function(c) { return c.textContent.trim(); });
-  }, EDITOR);
-  if (!headers.some(function(h) { return h.includes('Name'); }))  throw new Error('Header "Name" missing. Got: ' + headers);
-  if (!headers.some(function(h) { return h.includes('Score'); })) throw new Error('Header "Score" missing. Got: ' + headers);
-  if (!headers.some(function(h) { return h.includes('Grade'); })) throw new Error('Header "Grade" missing. Got: ' + headers);
-
-  const cells = await page.evaluate(function(sel) {
-    return Array.from(document.querySelectorAll(sel + ' td')).map(function(c) { return c.textContent.trim(); });
-  }, EDITOR);
+  const cells = await page.evaluate(
+    (sel) => Array.from(document.querySelectorAll(sel + ' td')).map((c) => c.textContent.trim()),
+    EDITOR,
+  );
   const flat = cells.join(' ');
-  if (!flat.includes('Alice')) throw new Error('"Alice" missing from table. cells: ' + flat);
-  if (!flat.includes('97'))    throw new Error('Updated score "97" missing. cells: ' + flat);
-  if (!flat.includes('Bob'))   throw new Error('"Bob" missing from table. cells: ' + flat);
-  if (!flat.includes('82'))    throw new Error('"82" missing from table. cells: ' + flat);
+  if (!flat.includes('Widget A')) throw new Error('"Widget A" missing. cells: ' + flat);
+  if (!flat.includes('Widget B')) throw new Error('"Widget B" missing. cells: ' + flat);
+  if (!flat.includes('25'))       throw new Error('Updated qty "25" missing. cells: ' + flat);
+  if (!flat.includes('Widget C')) throw new Error('"Widget C" missing. cells: ' + flat);
 }
 
-/**
- * S6: YouTube and image embeds
- * Covers: /youtube, /image
- */
-async function scenario6(page) {
+// S19 — Delete and rewrite: all repositioning via mouse clicks, no arrow keys
+async function scenario19(page) {
   const editor = page.locator(EDITOR);
   await editor.click();
 
-  await page.keyboard.type('Media Gallery', { delay: 25 });
+  await page.keyboard.type('Original heading', { delay: 25 });
   await page.keyboard.press('Enter');
-
-  // Override window.prompt for YouTube URL
-  await page.evaluate(function() {
-    window._pendingPromptAnswer = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
-    window.prompt = function(msg, def) {
-      var ans = window._pendingPromptAnswer || def;
-      window._pendingPromptAnswer = null;
-      return ans;
-    };
-  });
-  await slashCmd(page, '/YouTube', 'YouTube');
-  await page.waitForTimeout(800);
-
-  await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('Enter');
-  await page.keyboard.type('Above is a video.', { delay: 25 });
-  await page.keyboard.press('Enter');
-
-  // Override window.prompt for image URL
-  await page.evaluate(function() {
-    window._pendingPromptAnswer = 'https://placekitten.com/400/300';
-    window.prompt = function(msg, def) {
-      var ans = window._pendingPromptAnswer || def;
-      window._pendingPromptAnswer = null;
-      return ans;
-    };
-  });
-  await slashCmd(page, '/Image', 'Image');
-  await page.waitForTimeout(800);
-
-  await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('Enter');
-  await page.keyboard.type('Above is an image.', { delay: 25 });
-
-  await page.waitForTimeout(400);
-
-  const text = await editorText(page);
-  if (!text.includes('Above is a video.'))  throw new Error('Video caption missing');
-  if (!text.includes('Above is an image.')) throw new Error('Image caption missing');
-
-  const iframeCount = await page.evaluate(function(sel) {
-    return Array.from(document.querySelectorAll(sel + ' iframe'))
-      .filter(function(f) { return f.src && f.src.includes('youtube'); }).length;
-  }, EDITOR);
-  if (iframeCount === 0) throw new Error('YouTube iframe not found in editor');
-
-  const imgCount = await page.locator(EDITOR + ' img').count();
-  if (imgCount === 0) throw new Error('Image tag not found in editor');
-}
-
-/**
- * S7: Callout and heading hierarchy
- * Covers: /heading1, /heading2, /heading3, /callout
- */
-async function scenario7(page) {
-  const editor = page.locator(EDITOR);
-  await editor.click();
-
-  await slashCmd(page, '/Heading', 'Heading 1');
-  await page.keyboard.type('Overview', { delay: 25 });
-  await page.keyboard.press('Enter');
-
-  await slashCmd(page, '/Callout', 'Callout');
-  await page.keyboard.type('This is important information.', { delay: 25 });
-  await page.keyboard.press('Enter');
-
-  await slashCmd(page, '/Heading', 'Heading 2');
-  await page.keyboard.type('Section A', { delay: 25 });
-  await page.keyboard.press('Enter');
-  await page.keyboard.type('Content for section A.', { delay: 25 });
-  await page.keyboard.press('Enter');
-
-  await slashCmd(page, '/Heading', 'Heading 3');
-  await page.keyboard.type('Subsection A1', { delay: 25 });
-  await page.keyboard.press('Enter');
-  await page.keyboard.type('Detailed content here.', { delay: 25 });
-
-  // Navigate up to callout text
-  for (var i = 0; i < 5; i++) await page.keyboard.press('ArrowUp');
-  await page.keyboard.press('End');
-  await page.keyboard.type(' Remember this.', { delay: 25 });
-
-  await page.waitForTimeout(400);
-
-  const h1 = await page.locator(EDITOR + ' h1').count();
-  const h2 = await page.locator(EDITOR + ' h2').count();
-  const h3 = await page.locator(EDITOR + ' h3').count();
-  if (h1 === 0) throw new Error('h1 not found');
-  if (h2 === 0) throw new Error('h2 not found');
-  if (h3 === 0) throw new Error('h3 not found');
-
-  const h1Text = await page.locator(EDITOR + ' h1').first().innerText();
-  if (!h1Text.includes('Overview')) throw new Error('h1 text wrong: ' + h1Text);
-
-  const h2Text = await page.locator(EDITOR + ' h2').first().innerText();
-  if (!h2Text.includes('Section A')) throw new Error('h2 text wrong: ' + h2Text);
-
-  const h3Text = await page.locator(EDITOR + ' h3').first().innerText();
-  if (!h3Text.includes('Subsection A1')) throw new Error('h3 text wrong: ' + h3Text);
-
-  const text = await editorText(page);
-  if (!text.includes('This is important information. Remember this.'))
-    throw new Error('Callout text wrong. Got: ' + text);
-}
-
-/**
- * S8: Delete and rewrite
- * Tests ArrowUp + Home + Shift+End + Delete + retype.
- */
-async function scenario8(page) {
-  const editor = page.locator(EDITOR);
-  await editor.click();
-
-  await page.keyboard.type('Draft content', { delay: 25 });
-  await page.keyboard.press('Enter');
-  await page.keyboard.type('This line will be deleted.', { delay: 25 });
+  await page.keyboard.type('This line will be replaced.', { delay: 25 });
   await page.keyboard.press('Enter');
   await page.keyboard.type('This line stays.', { delay: 25 });
   await page.keyboard.press('Enter');
-  await page.keyboard.type('This also gets deleted.', { delay: 25 });
+  await page.keyboard.type('This also gets replaced.', { delay: 25 });
 
-  // Navigate up to second line
-  await page.keyboard.press('ArrowUp');
-  await page.keyboard.press('ArrowUp');
+  await clickOnText(page, 'This line will be replaced.');
   await page.keyboard.press('Home');
   await page.keyboard.down('Shift');
   await page.keyboard.press('End');
   await page.keyboard.up('Shift');
-  await page.keyboard.press('Delete');
+  await page.keyboard.press('Backspace');
   await page.keyboard.type('This is the replacement line.', { delay: 25 });
 
-  // Navigate down to fourth line
-  await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('ArrowDown');
+  await clickOnText(page, 'This also gets replaced.');
   await page.keyboard.press('Home');
   await page.keyboard.down('Shift');
   await page.keyboard.press('End');
   await page.keyboard.up('Shift');
-  await page.keyboard.press('Delete');
+  await page.keyboard.press('Backspace');
   await page.keyboard.type('Also replaced.', { delay: 25 });
 
   await page.waitForTimeout(400);
   const text = await editorText(page);
-  const lines = text.split('\n').map(function(l) { return l.trim(); }).filter(Boolean);
 
-  if (!text.includes('Draft content'))
-    throw new Error('Paragraph 1 "Draft content" missing');
   if (!text.includes('This is the replacement line.'))
-    throw new Error('Replacement line missing');
-  if (text.includes('This line will be deleted.'))
+    throw new Error('Replacement line missing. Got: ' + text);
+  if (text.includes('This line will be replaced.'))
     throw new Error('Original deleted line still present');
   if (!text.includes('This line stays.'))
     throw new Error('"This line stays." was unexpectedly deleted');
   if (!text.includes('Also replaced.'))
-    throw new Error('"Also replaced." missing');
-  if (text.includes('This also gets deleted.'))
+    throw new Error('"Also replaced." missing. Got: ' + text);
+  if (text.includes('This also gets replaced.'))
     throw new Error('Second deleted line still present');
+}
 
-  const p1i = lines.findIndex(function(l) { return l.includes('Draft content'); });
-  const p2i = lines.findIndex(function(l) { return l.includes('This is the replacement line.'); });
-  const p3i = lines.findIndex(function(l) { return l.includes('This line stays.'); });
-  const p4i = lines.findIndex(function(l) { return l.includes('Also replaced.'); });
-  if (!(p1i < p2i)) throw new Error('Order wrong: p1(' + p1i + ') before p2(' + p2i + ')');
-  if (!(p3i < p4i)) throw new Error('Order wrong: p3(' + p3i + ') before p4(' + p4i + ')');
+// S20 — /youtube + /image in same doc, mouse-click to edit video caption
+async function scenario20(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await page.keyboard.type('Media Page', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await page.evaluate(() => { window.prompt = () => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'; });
+  await slashCmd(page, '/YouTube', 'YouTube');
+  await page.waitForTimeout(1000);
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Video caption here.', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await page.evaluate(() => { window.prompt = () => 'https://placekitten.com/400/300'; });
+  await slashCmd(page, '/Image', 'Image');
+  await page.waitForTimeout(800);
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Image caption here.', { delay: 25 });
+
+  await clickOnText(page, 'Video caption here.');
+  await page.keyboard.press('Home');
+  await page.keyboard.type('Watch: ', { delay: 25 });
+
+  await page.waitForTimeout(400);
+  const iframeCount = await page.evaluate(
+    (sel) => Array.from(document.querySelectorAll(sel + ' iframe'))
+      .filter((f) => f.src && f.src.includes('youtube')).length,
+    EDITOR,
+  );
+  if (iframeCount === 0) throw new Error('YouTube iframe not found');
+
+  const imgCount = await page.locator(EDITOR + ' img').count();
+  if (imgCount === 0) throw new Error('Image tag not found');
+
+  const text = await editorText(page);
+  if (!text.includes('Image caption here.')) throw new Error('Image caption missing');
+  if (!text.includes('Watch: Video caption here.')) throw new Error('Edited video caption missing');
+}
+
+// S21 — Delete a paragraph via mouse select+backspace, assert surroundings intact
+async function scenario21(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await slashCmd(page, '/Heading', 'Heading 2');
+  await page.keyboard.type('Keep This', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await page.keyboard.type('Temporary paragraph.', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Heading', 'Heading 2');
+  await page.keyboard.type('Second Section', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Content of section two.', { delay: 25 });
+
+  await clickOnText(page, 'Temporary paragraph.');
+  await page.keyboard.press('Home');
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('End');
+  await page.keyboard.up('Shift');
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Backspace');
+
+  await page.waitForTimeout(400);
+  const text = await editorText(page);
+  if (text.includes('Temporary paragraph.'))
+    throw new Error('Temporary paragraph still present after deletion');
+  if (!text.includes('Keep This'))
+    throw new Error('H2 "Keep This" missing after deletion');
+  if (!text.includes('Content of section two.'))
+    throw new Error('Section 2 content missing after deletion');
+}
+
+// S22 — /heading3 + /callout + /code triple combo
+async function scenario22(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await slashCmd(page, '/Heading', 'Heading 3');
+  await page.keyboard.type('Implementation', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Callout', 'Callout');
+  await page.keyboard.type('Review this carefully before deploying.', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Code', 'Code Block');
+  await page.waitForTimeout(300);
+
+  const codeBlock = page.locator(EDITOR + ' pre').first();
+  await codeBlock.click();
+  await page.waitForTimeout(200);
+  await page.keyboard.insertText('SELECT * FROM users WHERE active = true;');
+
+  await clickOnText(page, 'Review this carefully before deploying.');
+  await page.keyboard.press('End');
+  await page.keyboard.type(' Especially the migration.', { delay: 25 });
+
+  await page.waitForTimeout(400);
+  if (await page.locator(EDITOR + ' h3').count() === 0) throw new Error('h3 not found');
+
+  const codeContent = await page.evaluate(
+    (sel) => { const pre = document.querySelector(sel + ' pre'); return pre ? pre.innerText : ''; },
+    EDITOR,
+  );
+  if (!codeContent.includes('SELECT * FROM users'))
+    throw new Error('SQL query missing. Got: ' + codeContent);
+
+  const text = await editorText(page);
+  if (!text.includes('Especially the migration.'))
+    throw new Error('Appended callout note missing. Got: ' + text);
+}
+
+// S23 — /quote + /divider + /bullet editorial layout, mouse add attribution
+async function scenario23(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await slashCmd(page, '/Quote', 'Quote');
+  await page.keyboard.type('Innovation distinguishes between a leader and a follower.', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Divider', 'Divider');
+  await page.waitForTimeout(300);
+
+  const editorBox = await page.locator(EDITOR).boundingBox();
+  await page.mouse.click(editorBox.x + editorBox.width / 2, editorBox.y + editorBox.height - 30);
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Bullet', 'Bullet List');
+  await page.keyboard.type('Think different', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Stay hungry', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Stay foolish', { delay: 25 });
+
+  await clickOnText(page, 'Innovation distinguishes between a leader and a follower.');
+  await page.keyboard.press('End');
+  await page.keyboard.type(' -- Steve Jobs', { delay: 25 });
+
+  await page.waitForTimeout(400);
+  const bqContent = await page.evaluate(
+    (sel) => { const bq = document.querySelector(sel + ' blockquote'); return bq ? bq.innerText : ''; },
+    EDITOR,
+  );
+  if (!bqContent.includes('Steve Jobs'))
+    throw new Error('Attribution missing. Got: ' + bqContent);
+
+  if (await page.locator(EDITOR + ' hr').count() === 0) throw new Error('Divider missing');
+  if (await page.locator(EDITOR + ' ul li').count() < 3) throw new Error('Expected >=3 bullet items');
+}
+
+// S24 — Full-page: all 13 slash commands in one document
+async function scenario24(page) {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+
+  await slashCmd(page, '/Heading', 'Heading 1');
+  await page.keyboard.type('Complete Demo', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Heading', 'Heading 2');
+  await page.keyboard.type('Section One', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Heading', 'Heading 3');
+  await page.keyboard.type('Subsection', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Callout', 'Callout');
+  await page.keyboard.type('Important notice.', { delay: 25 });
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Bullet', 'Bullet List');
+  await page.keyboard.type('Item A', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Item B', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Backspace');
+
+  await slashCmd(page, '/Numbered', 'Numbered List');
+  await page.keyboard.type('First', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Second', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Backspace');
+
+  await slashCmd(page, '/To-do', 'To-do List');
+  await page.keyboard.type('Task one', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Task two', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Backspace');
+
+  await slashCmd(page, '/Quote', 'Quote');
+  await page.keyboard.type('A quote for the ages.', { delay: 25 });
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Code', 'Code Block');
+  await page.waitForTimeout(300);
+  const codeBlock = page.locator(EDITOR + ' pre').first();
+  await codeBlock.click();
+  await page.waitForTimeout(200);
+  await page.keyboard.insertText('const demo = true;');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Divider', 'Divider');
+  await page.waitForTimeout(300);
+  const box = await page.locator(EDITOR).boundingBox();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height - 30);
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Enter');
+
+  await slashCmd(page, '/Table', 'Table');
+  await page.waitForTimeout(500);
+  const th = page.locator(EDITOR + ' th').first();
+  await th.scrollIntoViewIfNeeded();
+  await th.click();
+  await page.waitForTimeout(250);
+  await page.keyboard.insertText('Col1');
+  await page.keyboard.press('Tab');
+  await page.keyboard.insertText('Col2');
+  await page.keyboard.press('Tab');
+  await page.keyboard.insertText('Col3');
+  await page.keyboard.press('Tab');
+  await page.keyboard.insertText('Val1');
+  await page.keyboard.press('Tab');
+  await page.keyboard.insertText('Val2');
+  await page.keyboard.press('Tab');
+  await page.keyboard.insertText('Val3');
+
+  const editorBox2 = await page.locator(EDITOR).boundingBox();
+  await page.mouse.click(editorBox2.x + editorBox2.width / 2, editorBox2.y + editorBox2.height - 20);
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Enter');
+
+  await page.evaluate(() => { window.prompt = () => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'; });
+  await slashCmd(page, '/YouTube', 'YouTube');
+  await page.waitForTimeout(1000);
+  await page.keyboard.press('Enter');
+
+  await page.evaluate(() => { window.prompt = () => 'https://placekitten.com/200/150'; });
+  await slashCmd(page, '/Image', 'Image');
+  await page.waitForTimeout(800);
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('End of demo.', { delay: 25 });
+
+  await page.waitForTimeout(600);
+
+  if (await page.locator(EDITOR + ' h1').count() === 0) throw new Error('H1 missing');
+  if (await page.locator(EDITOR + ' h2').count() === 0) throw new Error('H2 missing');
+  if (await page.locator(EDITOR + ' h3').count() === 0) throw new Error('H3 missing');
+  if (await page.locator(EDITOR + ' ul li').count() < 2) throw new Error('Bullet items missing');
+  if (await page.locator(EDITOR + ' ol li').count() < 2) throw new Error('Numbered items missing');
+  const todoCount = await page.locator(EDITOR + ' input[type="checkbox"], ' + EDITOR + ' [data-type="taskItem"]').count();
+  if (todoCount < 2) throw new Error('To-do items missing, got ' + todoCount);
+  if (await page.locator(EDITOR + ' blockquote').count() === 0) throw new Error('Blockquote missing');
+  if (await page.locator(EDITOR + ' pre').count() === 0) throw new Error('Code block missing');
+  if (await page.locator(EDITOR + ' hr').count() === 0) throw new Error('Divider missing');
+  if (await page.locator(EDITOR + ' table').count() === 0) throw new Error('Table missing');
+  const iframeCount = await page.evaluate(
+    (sel) => Array.from(document.querySelectorAll(sel + ' iframe'))
+      .filter((f) => f.src && f.src.includes('youtube')).length,
+    EDITOR,
+  );
+  if (iframeCount === 0) throw new Error('YouTube iframe missing');
+  if (await page.locator(EDITOR + ' img').count() === 0) throw new Error('Image missing');
+  const text = await editorText(page);
+  if (!text.includes('End of demo.')) throw new Error('Final text missing');
 }
 
 // ---------------------------------------------------------------------------
@@ -594,38 +1215,58 @@ async function main() {
 
   const browser = await chromium.launch({ headless: true });
 
+  const scenarios = [
+    [1,  'H2: structured document with two sections',          scenario01],
+    [2,  'Bullet list: create and mouse-edit an item',         scenario02],
+    [3,  'Numbered list: create and append to an item',        scenario03],
+    [4,  'To-do list: create, check, mouse-edit an item',      scenario04],
+    [5,  'H1: article with mouse append to paragraph',         scenario05],
+    [6,  'H1/H2/H3 hierarchy with mouse cursor fix',           scenario06],
+    [7,  'Divider: content before and after',                  scenario07],
+    [8,  'Quote: create, mouse-add attribution',               scenario08],
+    [9,  'Code block: multi-line, mouse-click to edit',        scenario09],
+    [10, 'Callout: insert, detect, mouse-append text',         scenario10],
+    [11, 'Table: fill 2 rows, mouse-click to update a cell',   scenario11],
+    [12, 'YouTube embed: assert iframe present',               scenario12],
+    [13, 'Image embed: assert img tag present',                scenario13],
+    [14, 'H1 + bullet + divider + numbered combo',             scenario14],
+    [15, 'H2 + code + quote with mouse repositioning',         scenario15],
+    [16, 'H2 + to-do + numbered task doc',                     scenario16],
+    [17, 'Callout + H1 + bullet, mouse-edit callout',          scenario17],
+    [18, 'Table: 3-row inventory, mouse-edit qty cell',        scenario18],
+    [19, 'Delete and rewrite via mouse selection only',        scenario19],
+    [20, 'YouTube + image in same doc, mouse add captions',    scenario20],
+    [21, 'Delete a paragraph via mouse select+backspace',      scenario21],
+    [22, 'H3 + callout + code triple combo',                   scenario22],
+    [23, 'Quote + divider + bullet editorial layout',          scenario23],
+    [24, 'Full-page: all 13 slash commands in one document',   scenario24],
+  ];
+
   try {
-    console.log('\n=== Running 8 editor scenarios ===\n');
-    await runScenario(browser, baseUrl, 1, 'Write a structured document',                       scenario1);
-    await runScenario(browser, baseUrl, 2, 'Build a list document',                             scenario2);
-    await runScenario(browser, baseUrl, 3, 'Mixed content -- headings, todo, divider, numbered', scenario3);
-    await runScenario(browser, baseUrl, 4, 'Code and quote blocks',                             scenario4);
-    await runScenario(browser, baseUrl, 5, 'Table editing',                                     scenario5);
-    await runScenario(browser, baseUrl, 6, 'YouTube and image embeds',                          scenario6);
-    await runScenario(browser, baseUrl, 7, 'Callout and heading hierarchy',                     scenario7);
-    await runScenario(browser, baseUrl, 8, 'Delete and rewrite',                                scenario8);
+    console.log('\n=== Running ' + scenarios.length + ' editor scenarios ===\n');
+    for (const [id, name, fn] of scenarios) {
+      await runScenario(browser, baseUrl, id, name, fn);
+    }
   } finally {
     await browser.close();
     console.log('\u{1F6D1} Stopping preview server...');
     try { process.kill(-server.pid, 'SIGTERM'); } catch (_) { server.kill(); }
   }
 
-  const passed = results.filter(function(r) { return r.status === 'PASS'; }).length;
+  const passed = results.filter((r) => r.status === 'PASS').length;
   const total  = results.length;
   console.log('\n=== RESULTS ===');
-  for (var i = 0; i < results.length; i++) {
-    var r    = results[i];
-    var icon = r.status === 'PASS' ? '\u2705' : '\u274c';
-    var note = r.notes ? ' | ' + r.notes : '';
-    console.log(icon + ' S' + r.id + ' ' + r.status + ': ' + r.name + note);
+  for (const r of results) {
+    const icon = r.status === 'PASS' ? '\u2705' : '\u274c';
+    const note = r.notes ? ' | ' + r.notes : '';
+    console.log(icon + ' S' + String(r.id).padStart(2, '0') + ' ' + r.status + ': ' + r.name + note);
   }
   console.log('\n=== ' + passed + '/' + total + ' PASS ===');
 
   process.exit(passed === total ? 0 : 1);
 }
 
-main().catch(function(err) {
+main().catch((err) => {
   console.error('Fatal error:', err);
   process.exit(1);
 });
-
