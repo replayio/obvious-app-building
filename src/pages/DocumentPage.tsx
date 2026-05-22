@@ -45,8 +45,9 @@ export function DocumentPage() {
 
   return (
     <div className="flex-1 overflow-auto bg-white">
-      <div className="max-w-3xl mx-auto px-8 py-12">
-        <div className="flex items-center justify-end gap-2 mb-8">
+      <div className="max-w-3xl mx-auto px-8 py-8">
+
+        <div className="flex items-center justify-end gap-2 mb-4">
           <button
             onClick={() => setShareOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
@@ -75,19 +76,19 @@ export function DocumentPage() {
           </div>
         </div>
 
-        <div className="text-5xl mb-4 leading-none">{doc.icon}</div>
+        <div className="text-4xl mb-2 leading-none">{doc.icon}</div>
 
         <input
           type="text"
           value={doc.title}
           onChange={handleTitleChange}
           placeholder="Untitled"
-          className="w-full text-4xl font-bold text-gray-900 border-none outline-none bg-transparent placeholder-gray-300 mb-6 leading-tight"
+          className="w-full text-4xl font-bold text-gray-900 border-none outline-none bg-transparent placeholder-gray-300 mb-4 leading-tight"
         />
 
         <PropertiesPanel docId={doc.id} />
 
-        <div className="border-t border-gray-100 mt-6 mb-6" />
+        <div className="border-t border-gray-100 mt-4 mb-4" />
 
         <RichTextEditor
           key={doc.id}

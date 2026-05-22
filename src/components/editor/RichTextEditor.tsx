@@ -16,6 +16,9 @@ import Image from '@tiptap/extension-image';
 import Placeholder from '@tiptap/extension-placeholder';
 import Youtube from '@tiptap/extension-youtube';
 import { SlashCommand } from '../../extensions/SlashCommand';
+import { KeyboardFixes } from '../../extensions/KeyboardFixes';
+import { CodeBlockLines } from '../../extensions/CodeBlockLines';
+import { TableSelectionFix } from '../../extensions/TableSelectionFix';
 
 interface Props {
   content: string;
@@ -24,6 +27,12 @@ interface Props {
 }
 
 export function RichTextEditor({ content, onChange, placeholder }: Props) {
+  // Track whether the last content update originated from THIS editor instance.
+  // When it did, we must NOT call setContent() in the effect — doing so would
+  // reset the cursor position on every keystroke.
+  const internalUpdateRef = useRef(false);
+  const prevContentRef = useRef(content);
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
@@ -40,26 +49,71 @@ export function RichTextEditor({ content, onChange, placeholder }: Props) {
       Youtube.configure({ controls: true, nocookie: true }),
       Placeholder.configure({ placeholder: placeholder ?? "Type '/' for commands…" }),
       SlashCommand,
+      KeyboardFixes,
+      CodeBlockLines,
+      TableSelectionFix,
     ],
     content: (() => {
       try { return JSON.parse(content); } catch { return content; }
     })(),
-    onUpdate: ({ editor: e }) => onChange(JSON.stringify(e.getJSON())),
+    onUpdate: ({ editor: e }) => {
+      // Mark that the next content prop change comes from us, not an external source.
+      internalUpdateRef.current = true;
+      onChange(JSON.stringify(e.getJSON()));
+    },
     editorProps: {
       attributes: { class: 'prose prose-slate max-w-none focus:outline-none min-h-[400px] px-2 py-2' },
+      handleDOMEvents: {
+        // ProseMirror defers selectionToDOM on Chrome after clicks (its
+        // drag-detection workaround). This can cause keyboard.insertText()
+        // in Playwright to insert at the stale DOM selection position instead
+        // of ProseMirror's internal cursor. Intercept beforeinput (which IS
+        // cancelable) to route insertText through ProseMirror directly.
+        beforeinput: (view, event) => {
+          const e = event as InputEvent;
+          if (e.inputType !== 'insertText' || !e.data || view.composing) return false;
+          // Only intercept when the cursor is inside a table cell.
+          // ProseMirror defers selectionToDOM on Chrome after clicks, which can
+          // cause keyboard.insertText() to land at the stale DOM selection
+          // (outside the table). Routing through PM's selection fixes this.
+          const { $from } = view.state.selection;
+          let insideTableCell = false;
+          for (let d = $from.depth; d >= 0; d--) {
+            const name = $from.node(d).type.name;
+            if (name === 'tableCell' || name === 'tableHeader') {
+              insideTableCell = true;
+              break;
+            }
+          }
+          if (!insideTableCell) return false;
+          e.preventDefault();
+          const { state } = view;
+          view.dispatch(
+            state.tr
+              .insertText(e.data, state.selection.from, state.selection.to)
+              .scrollIntoView()
+          );
+          return true;
+        },
+      },
     },
   });
 
-  const prevContentRef = useRef(content);
   useEffect(() => {
     if (!editor) return;
     if (content !== prevContentRef.current) {
       prevContentRef.current = content;
-      try {
-        editor.commands.setContent(JSON.parse(content));
-      } catch {
-        editor.commands.setContent(content);
+      // Only apply the incoming content to the editor when the change came
+      // from an external source (e.g. collaborative sync, doc switch).
+      // Skip when we emitted the change ourselves to avoid cursor resets.
+      if (!internalUpdateRef.current) {
+        try {
+          editor.commands.setContent(JSON.parse(content));
+        } catch {
+          editor.commands.setContent(content);
+        }
       }
+      internalUpdateRef.current = false;
     }
   }, [content, editor]);
 
@@ -79,3 +133,4 @@ export function RichTextEditor({ content, onChange, placeholder }: Props) {
     </div>
   );
 }
+

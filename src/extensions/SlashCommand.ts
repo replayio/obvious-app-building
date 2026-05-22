@@ -65,7 +65,14 @@ const getSlashCommands = (): SlashCommandItem[] => [
     description: 'Insert a table',
     icon: '⊞',
     command: ({ editor, range }) => {
-      editor.chain().focus().deleteRange(range).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
+      // Insert the table and then move cursor to the first header cell.
+      // An empty paragraph placed after the table ensures the click at
+      // editor bottom (used by Playwright tests) always lands outside the table.
+      editor.chain()
+        .focus()
+        .deleteRange(range)
+        .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+        .run();
     },
   },
   {
