@@ -71,8 +71,10 @@ const getSlashCommands = (): SlashCommandItem[] => [
     description: 'Insert a table',
     icon: '⊞',
     command: ({ editor, range }) => {
-      // After insertTable, place cursor inside the first header cell (from + 4).
-      editor.chain().focus().deleteRange(range).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).setTextSelection(range.from + 4).run();
+      // After insertTable, place cursor inside the first header cell.
+      // range.from + 3 lands at the text position inside tableHeader > paragraph.
+      // (range.from + 4 incorrectly points to the tableHeader node boundary.)
+      editor.chain().focus().deleteRange(range).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).setTextSelection(range.from + 3).run();
     },
   },
   {

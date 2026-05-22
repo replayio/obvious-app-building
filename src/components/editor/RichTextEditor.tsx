@@ -3,7 +3,6 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
 import { FormattingToolbar } from './FormattingToolbar';
 import StarterKit from '@tiptap/starter-kit';
-import CodeBlock from '@tiptap/extension-code-block';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
 import TextAlign from '@tiptap/extension-text-align';
@@ -17,6 +16,10 @@ import Image from '@tiptap/extension-image';
 import Placeholder from '@tiptap/extension-placeholder';
 import Youtube from '@tiptap/extension-youtube';
 import { SlashCommand } from '../../extensions/SlashCommand';
+import { CodeBlockPerLine } from '../../extensions/CodeBlockPerLine';
+import { Extension } from '@tiptap/core';
+import { TextSelection } from '@tiptap/pm/state';
+import { liftListItem } from '@tiptap/pm/schema-list';
 
 interface Props {
   content: string;
@@ -34,16 +37,9 @@ export function RichTextEditor({ content, onChange, placeholder }: Props) {
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3] }, codeBlock: false }),
-      // CodeBlock extended with Escape key to exit — by default Escape is a no-op
-      // inside <pre><code> and traps the cursor, preventing subsequent slash commands.
-      CodeBlock.extend({
-        addKeyboardShortcuts() {
-          return {
-            ...this.parent?.(),
-            Escape: ({ editor }) => editor.commands.exitCode(),
-          };
-        },
-      }),
+      // CodeBlockPerLine: per-line <div> wrappers make each line independently
+      // clickable, and adds Escape → exitCode() to un-trap the cursor.
+      CodeBlockPerLine,
       Underline,
       Link.configure({ openOnClick: false, HTMLAttributes: { class: 'text-indigo-600 underline cursor-pointer' } }),
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
@@ -57,6 +53,65 @@ export function RichTextEditor({ content, onChange, placeholder }: Props) {
       Youtube.configure({ controls: true, nocookie: true }),
       Placeholder.configure({ placeholder: placeholder ?? "Type '/' for commands…" }),
       SlashCommand,
+      // Fix Ctrl+A inside table cells: scope selection to the cell instead of
+      // selecting the entire document (which causes Backspace to wipe all content).
+      Extension.create({
+        name: 'tableCellSelectAll',
+        addKeyboardShortcuts() {
+          return {
+            'Mod-a': ({ editor }) => {
+              const { state } = editor;
+              const { $anchor } = state.selection;
+              // Walk up ancestors to find a tableCell or tableHeader node.
+              for (let depth = $anchor.depth; depth > 0; depth--) {
+                const node = $anchor.node(depth);
+                if (node.type.name === 'tableCell' || node.type.name === 'tableHeader') {
+                  const start = $anchor.start(depth);
+                  const end = $anchor.end(depth);
+                  editor.view.dispatch(
+                    state.tr.setSelection(TextSelection.create(state.doc, start, end))
+                  );
+                  return true;
+                }
+              }
+              return false; // not in a table — fall through to default selectAll
+            },
+          };
+        },
+      }),
+      // Fix Backspace on an empty list item: lift the item out of the list
+      // instead of joining backward into the previous item, which would cause
+      // subsequent slash commands to be appended as plain text.
+      Extension.create({
+        name: 'listItemBackspace',
+        addKeyboardShortcuts() {
+          return {
+            Backspace: ({ editor }) => {
+              const { state } = editor;
+              const { $anchor, empty } = state.selection;
+              if (!empty) return false;
+              const parent = $anchor.parent;
+              const grandParent = $anchor.node($anchor.depth - 1);
+              const isInListItem =
+                grandParent?.type.name === 'listItem' ||
+                grandParent?.type.name === 'taskItem';
+              // Only intercept when cursor is at start of an empty list paragraph.
+              if (!isInListItem || parent.content.size !== 0 || $anchor.parentOffset !== 0) {
+                return false;
+              }
+              const listItemType =
+                grandParent.type.name === 'taskItem'
+                  ? state.schema.nodes.taskItem
+                  : state.schema.nodes.listItem;
+              if (!listItemType) return false;
+              return editor.view.dispatch(
+                // @ts-expect-error liftListItem returns a transaction-dispatching function
+                liftListItem(listItemType)(state, editor.view.dispatch)
+              ) ?? false;
+            },
+          };
+        },
+      }),
     ],
     content: (() => {
       try { return JSON.parse(content); } catch { return content; }
