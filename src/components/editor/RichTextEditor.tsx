@@ -104,10 +104,9 @@ export function RichTextEditor({ content, onChange, placeholder }: Props) {
                   ? state.schema.nodes.taskItem
                   : state.schema.nodes.listItem;
               if (!listItemType) return false;
-              return editor.view.dispatch(
-                // @ts-expect-error liftListItem returns a transaction-dispatching function
-                liftListItem(listItemType)(state, editor.view.dispatch)
-              ) ?? false;
+              // liftListItem(type)(state, dispatch) calls dispatch(tr) and returns bool.
+              // Do not double-wrap with editor.view.dispatch.
+              return liftListItem(listItemType)(state, editor.view.dispatch) ?? false;
             },
           };
         },

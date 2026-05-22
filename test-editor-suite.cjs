@@ -14,6 +14,14 @@ const { spawn }    = require('child_process');
 const path         = require('path');
 const fs           = require('fs');
 
+// Use Replay Chromium when RECORD_ALL_CONTENT is set, for time-travel debugging.
+function getReplayExecutablePath() {
+  try {
+    const { getExecutablePath } = require('@replayio/playwright');
+    return getExecutablePath('chromium');
+  } catch { return null; }
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -860,7 +868,7 @@ async function scenario18(page) {
   await page.keyboard.press('Tab');
   await page.keyboard.insertText('12.00');
 
-  const qtyTd = page.locator(EDITOR + ' td').nth(3);
+  const qtyTd = page.locator(EDITOR + ' td').nth(4); // td[0-2]=Widget A row, td[3]=Widget B name, td[4]=Widget B qty
   await qtyTd.scrollIntoViewIfNeeded();
   await qtyTd.click();
   await page.waitForTimeout(250);
@@ -1162,10 +1170,17 @@ async function scenario24(page) {
   await page.keyboard.press('Tab');
   await page.keyboard.insertText('Val3');
 
-  const editorBox2 = await page.locator(EDITOR).boundingBox();
-  await page.mouse.click(editorBox2.x + editorBox2.width / 2, editorBox2.y + editorBox2.height - 20);
+  // Exit table by scrolling the last row into view, clicking just below it,
+  // then pressing Enter to open a fresh paragraph for the next slash command.
+  const lastRow = page.locator(EDITOR + ' tr').last();
+  await lastRow.scrollIntoViewIfNeeded();
   await page.waitForTimeout(200);
+  const rowBox = await lastRow.boundingBox();
+  // Click slightly below the last table row to land in the trailing paragraph.
+  await page.mouse.click(rowBox.x + rowBox.width / 2, rowBox.y + rowBox.height + 15);
+  await page.waitForTimeout(300);
   await page.keyboard.press('Enter');
+  await page.waitForTimeout(200);
 
   await page.evaluate(() => { window.prompt = () => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'; });
   await slashCmd(page, '/YouTube', 'YouTube');
@@ -1213,7 +1228,12 @@ async function main() {
   const { server, baseUrl } = await startPreviewServer();
   console.log('\u2705 Preview server ready at ' + baseUrl + '\n');
 
-  const browser = await chromium.launch({ headless: true });
+  // Use Replay Chromium for recording when RECORD_ALL_CONTENT env var is set.
+  const replayExec = process.env.RECORD_ALL_CONTENT ? getReplayExecutablePath() : null;
+  const browser = await chromium.launch({
+    headless: true,
+    ...(replayExec ? { executablePath: replayExec } : {}),
+  });
 
   const scenarios = [
     [1,  'H2: structured document with two sections',          scenario01],

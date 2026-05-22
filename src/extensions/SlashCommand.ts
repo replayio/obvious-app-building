@@ -17,10 +17,10 @@ const getSlashCommands = (): SlashCommandItem[] => [
     description: 'Large section heading',
     icon: 'H1',
     command: ({ editor, range }) => {
-      // deleteRange collapses the block; setNode converts it to a heading.
-      // Explicitly restore cursor to range.from so text goes into the heading,
-      // not the trailing empty paragraph TipTap appends for schema compliance.
-      editor.chain().focus().deleteRange(range).setNode('heading', { level: 1 }).setTextSelection(range.from).run();
+      // deleteRange removes the slash query text. clearNodes() exits any list/quote
+      // container the cursor is in, turning the current block into a plain paragraph.
+      // setNode then converts that paragraph to a heading in-place.
+      editor.chain().focus().deleteRange(range).clearNodes().setNode('heading', { level: 1 }).setTextSelection(range.from).run();
     },
   },
   {
@@ -28,7 +28,7 @@ const getSlashCommands = (): SlashCommandItem[] => [
     description: 'Medium section heading',
     icon: 'H2',
     command: ({ editor, range }) => {
-      editor.chain().focus().deleteRange(range).setNode('heading', { level: 2 }).setTextSelection(range.from).run();
+      editor.chain().focus().deleteRange(range).clearNodes().setNode('heading', { level: 2 }).setTextSelection(range.from).run();
     },
   },
   {
@@ -36,7 +36,7 @@ const getSlashCommands = (): SlashCommandItem[] => [
     description: 'Small section heading',
     icon: 'H3',
     command: ({ editor, range }) => {
-      editor.chain().focus().deleteRange(range).setNode('heading', { level: 3 }).setTextSelection(range.from).run();
+      editor.chain().focus().deleteRange(range).clearNodes().setNode('heading', { level: 3 }).setTextSelection(range.from).run();
     },
   },
   {
