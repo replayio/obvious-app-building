@@ -121,12 +121,3 @@ Key endpoints:
 | GET | /projects/{id}/status | Poll analysis status |
 | GET | /projects/{id}/bugs | List bugs found |
 | GET | /bugs/{id} | Full bug detail |
-
-## Known Failure Patterns (from test-editor-suite.cjs)
-
-These are the three root-cause patterns identified in the TipTap editor test suite:
-
-- **Pattern A — Focus loss after Tippy menu:** `keyboard.type()` produces empty content after slash commands; editor loses focus when the Tippy menu dismisses
-- **Pattern B — Slash menu timeout:** `waitForSelector` for slash command menu items exceeds 6s timeout; menu does not appear
-- **Pattern C — Mouse-click misdirection:** `clickOnText()` lands in the wrong block in a multi-block document; subsequent `keyboard.type()` appends to an adjacent element instead of the intended paragraph
-
