@@ -17,7 +17,10 @@ const getSlashCommands = (): SlashCommandItem[] => [
     description: 'Large section heading',
     icon: 'H1',
     command: ({ editor, range }) => {
-      editor.chain().focus().deleteRange(range).setNode('heading', { level: 1 }).run();
+      // deleteRange collapses the block; setNode converts it to a heading.
+      // Explicitly restore cursor to range.from so text goes into the heading,
+      // not the trailing empty paragraph TipTap appends for schema compliance.
+      editor.chain().focus().deleteRange(range).setNode('heading', { level: 1 }).setTextSelection(range.from).run();
     },
   },
   {
@@ -25,7 +28,7 @@ const getSlashCommands = (): SlashCommandItem[] => [
     description: 'Medium section heading',
     icon: 'H2',
     command: ({ editor, range }) => {
-      editor.chain().focus().deleteRange(range).setNode('heading', { level: 2 }).run();
+      editor.chain().focus().deleteRange(range).setNode('heading', { level: 2 }).setTextSelection(range.from).run();
     },
   },
   {
@@ -33,7 +36,7 @@ const getSlashCommands = (): SlashCommandItem[] => [
     description: 'Small section heading',
     icon: 'H3',
     command: ({ editor, range }) => {
-      editor.chain().focus().deleteRange(range).setNode('heading', { level: 3 }).run();
+      editor.chain().focus().deleteRange(range).setNode('heading', { level: 3 }).setTextSelection(range.from).run();
     },
   },
   {
@@ -41,7 +44,9 @@ const getSlashCommands = (): SlashCommandItem[] => [
     description: 'Create a simple bulleted list',
     icon: '•—',
     command: ({ editor, range }) => {
-      editor.chain().focus().deleteRange(range).toggleBulletList().run();
+      // After toggleBulletList the cursor lands in the trailing paragraph;
+      // range.from + 2 is inside bulletList > listItem > paragraph.
+      editor.chain().focus().deleteRange(range).toggleBulletList().setTextSelection(range.from + 2).run();
     },
   },
   {
@@ -49,7 +54,7 @@ const getSlashCommands = (): SlashCommandItem[] => [
     description: 'Create a numbered list',
     icon: '1.',
     command: ({ editor, range }) => {
-      editor.chain().focus().deleteRange(range).toggleOrderedList().run();
+      editor.chain().focus().deleteRange(range).toggleOrderedList().setTextSelection(range.from + 2).run();
     },
   },
   {
@@ -57,7 +62,8 @@ const getSlashCommands = (): SlashCommandItem[] => [
     description: 'Track tasks with checkboxes',
     icon: '☑',
     command: ({ editor, range }) => {
-      editor.chain().focus().deleteRange(range).toggleTaskList().run();
+      // taskList > taskItem > paragraph: cursor at range.from + 3
+      editor.chain().focus().deleteRange(range).toggleTaskList().setTextSelection(range.from + 3).run();
     },
   },
   {
@@ -65,7 +71,8 @@ const getSlashCommands = (): SlashCommandItem[] => [
     description: 'Insert a table',
     icon: '⊞',
     command: ({ editor, range }) => {
-      editor.chain().focus().deleteRange(range).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
+      // After insertTable, place cursor inside the first header cell (from + 4).
+      editor.chain().focus().deleteRange(range).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).setTextSelection(range.from + 4).run();
     },
   },
   {
@@ -73,7 +80,8 @@ const getSlashCommands = (): SlashCommandItem[] => [
     description: 'Capture a quote',
     icon: '❝',
     command: ({ editor, range }) => {
-      editor.chain().focus().deleteRange(range).toggleBlockquote().run();
+      // toggleBlockquote wraps the block; cursor stays at range.from inside blockquote > paragraph.
+      editor.chain().focus().deleteRange(range).toggleBlockquote().setTextSelection(range.from).run();
     },
   },
   {
@@ -81,7 +89,7 @@ const getSlashCommands = (): SlashCommandItem[] => [
     description: 'Capture a code snippet',
     icon: '</>',
     command: ({ editor, range }) => {
-      editor.chain().focus().deleteRange(range).toggleCodeBlock().run();
+      editor.chain().focus().deleteRange(range).toggleCodeBlock().setTextSelection(range.from).run();
     },
   },
   {
@@ -135,6 +143,9 @@ export const SlashCommand = Extension.create({
     return {
       suggestion: {
         char: '/',
+        // Allow '/' to trigger from any cursor position, not just after whitespace.
+        // The default allowedPrefixes: [' '] blocks slash commands mid-word (e.g. 'Item B/').
+        allowedPrefixes: null,
         command: ({ editor, range, props }: { editor: unknown; range: unknown; props: SlashCommandItem }) => {
           props.command({ editor, range } as SuggestionProps);
         },
