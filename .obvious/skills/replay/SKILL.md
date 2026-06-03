@@ -1,5 +1,5 @@
 ---
-name: "replayio"
+name: "replay"
 description: "Use when configuring an Obvious app-building environment for Replay recording through agent-browser. Covers Replay secrets, Replay Chromium, AGENT_BROWSER_EXECUTABLE_PATH, AGENT_BROWSER_STREAM_PORT, and recording flags. This skill is instructions-only and does not use MCP, hooks, scripts, or app bindings."
 ---
 
