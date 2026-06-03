@@ -1,213 +1,117 @@
 ---
-name: replay
-version: 1.0.0
-description: Record, upload, and inspect browser sessions with Replay.io for time-travel debugging. Covers CLI setup, headless recording, uploading, and using the Replay MCP server to analyze recordings.
-triggers:
-  - replay
-  - record browser
-  - time-travel debugging
-  - replay.io
-  - replay chromium
-  - replay mcp
-  - replayio
-  - upload recording
-  - inspect recording
-successCriteria: Recording is uploaded and viewable on app.replay.io; MCP tools return data from the recording.
+name: "replayio"
+description: "Use when configuring an Obvious app-building environment for Replay recording through agent-browser. Covers Replay secrets, Replay Chromium, AGENT_BROWSER_EXECUTABLE_PATH, AGENT_BROWSER_STREAM_PORT, and recording flags. This skill is instructions-only and does not use MCP, hooks, scripts, or app bindings."
 ---
 
-# Replay.io Skill
+# Replay.io
 
-Record browser sessions and inspect them with Replay's time-travel debugger and MCP analysis tools.
+Configure the environment before starting `agent-browser` or opening an agent browser session. This plugin is skills-only: do not assume a hook, script, MCP server, or app binding will set anything for you.
 
-## Environment
+## Hard Rules
 
-| Item | Path / Value |
-|---|---|
-| Replay CLI | `/home/user/.npm-global/bin/replayio` |
-| Replay Chromium | `~/.replay/runtimes/chrome-linux/chrome` |
-| API key env var | `REPLAY_API_KEY` (set from `process.env.SECRET_REPLAY_API_KEY`) |
-| MCP endpoint | `https://dispatch.replay.io/nut/mcp` |
-| MCP transport | HTTP SSE with `Authorization: Bearer <REPLAY_API_KEY>` |
+- Use `agent-browser` as the browser surface for Obvious app testing.
+- Do not use `playwright-cli` as the browser driver.
+- Do not use a preview pane or embedded webview that cannot honor `AGENT_BROWSER_EXECUTABLE_PATH`.
+- Do not use MCP tools from this plugin; it has no MCP server.
+- Keep secrets out of logs and final reports.
 
-## 1. Setup & Prerequisites
+## Required Environment
 
-### Install system dependencies (once per sandbox)
-
-The Replay Chromium binary requires these libraries on Ubuntu/Debian:
+Map Obvious secrets into the env vars that Replay and Loop QA tooling expect:
 
 ```bash
-sudo apt-get install -y \
-  libnss3 libnss3-dev \
-  libatk1.0-0 libatk-bridge2.0-0 \
-  libcups2 libdrm2 \
-  libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 \
-  libgbm1 libasound2
+if [ -z "${REPLAY_API_KEY:-}" ] && [ -n "${SECRET_REPLAY_API_KEY:-}" ]; then
+  export REPLAY_API_KEY="$SECRET_REPLAY_API_KEY"
+fi
+
+if [ -z "${LOOP_QA_API_KEY:-}" ] && [ -n "${SECRET_LOOP_QA_API_KEY:-}" ]; then
+  export LOOP_QA_API_KEY="$SECRET_LOOP_QA_API_KEY"
+fi
+
+export RECORD_ALL_CONTENT='1'
+export RECORD_REPLAY_VERBOSE='1'
+export AGENT_BROWSER_STREAM_PORT="${AGENT_BROWSER_STREAM_PORT:-9223}"
 ```
 
-**If `libasound2` fails** (renamed on newer Ubuntu):
-```bash
-sudo apt-get install -y libasound2t64 2>/dev/null || sudo apt-get install -y libasound2
-```
+Expected secrets:
 
-### Install Replay CLI (once per sandbox)
+- `SECRET_REPLAY_API_KEY`: Replay API key used by `replayio` and Replay Chromium.
+- `SECRET_LOOP_QA_API_KEY`: Loop QA API token that starts with `lqa_`.
 
-```bash
-npm install -g replayio
-```
+If a host already exposes `REPLAY_API_KEY` or `LOOP_QA_API_KEY`, preserve it.
 
-### Authenticate
+## Replay Chromium Path
 
-```bash
-export REPLAY_API_KEY="$SECRET_REPLAY_API_KEY"
-# CLI reads REPLAY_API_KEY automatically — no `replayio login` needed
-```
+Set `AGENT_BROWSER_EXECUTABLE_PATH` before launching `agent-browser`.
 
-### Download Replay Chromium runtime (once per sandbox)
+In the Obvious Linux sandbox, Replay Chromium is usually:
 
 ```bash
-REPLAY_API_KEY="$SECRET_REPLAY_API_KEY" replayio update-browsers --all
-# or just run a record command — it auto-downloads if missing
+export AGENT_BROWSER_EXECUTABLE_PATH="$HOME/.replay/runtimes/chrome-linux/chrome"
 ```
 
-## 2. Recording
-
-### Headless recording (recommended for sandboxes)
-
-The Replay CLI supports `--headless` directly — no Xvfb required:
+On local macOS, Replay Chromium is usually:
 
 ```bash
-export REPLAY_API_KEY="$SECRET_REPLAY_API_KEY"
-replayio record --headless https://example.com
+export AGENT_BROWSER_EXECUTABLE_PATH="$HOME/.replay/runtimes/Replay-Chromium.app/Contents/MacOS/Chromium"
 ```
 
-The command:
-1. Launches Replay Chromium headlessly
-2. Navigates to the URL
-3. Records the session
-4. Uploads automatically on exit
-5. Prints the recording ID and `app.replay.io` URL
-
-### With Xvfb (fallback if headless flag unavailable)
+Verify the selected executable:
 
 ```bash
-Xvfb :99 -screen 0 1280x720x24 &
-DISPLAY=:99 REPLAY_API_KEY="$SECRET_REPLAY_API_KEY" replayio record https://example.com
+test -x "$AGENT_BROWSER_EXECUTABLE_PATH"
 ```
 
-### Upload recorded sessions manually
-
-If auto-upload was skipped or to re-upload:
+If it does not exist, install or refresh Replay Chromium:
 
 ```bash
-REPLAY_API_KEY="$SECRET_REPLAY_API_KEY" replayio upload --all
+command -v replayio >/dev/null 2>&1 || npm install -g replayio
+replayio update-browsers --all
 ```
 
-### View recordings list
+Then re-run `test -x "$AGENT_BROWSER_EXECUTABLE_PATH"`.
+
+## Agent Browser Startup Checklist
+
+1. Export `REPLAY_API_KEY` from `SECRET_REPLAY_API_KEY`.
+2. Export `LOOP_QA_API_KEY` from `SECRET_LOOP_QA_API_KEY` if Loop QA will be used.
+3. Export `AGENT_BROWSER_EXECUTABLE_PATH` to Replay Chromium.
+4. Export `AGENT_BROWSER_STREAM_PORT=9223` unless the host provides another port.
+5. Export `RECORD_ALL_CONTENT=1` and `RECORD_REPLAY_VERBOSE=1`.
+6. Start or reconnect `agent-browser` only after the env is set.
+7. Open the app URL in the agent browser and inspect it directly.
+8. Close the browser session when done.
+9. Upload pending Replay recordings explicitly if you need a URL before responding:
 
 ```bash
-REPLAY_API_KEY="$SECRET_REPLAY_API_KEY" replayio ls
+replayio upload-all || replayio upload --all || replayio upload
 ```
 
-## 3. Viewing Recordings
+## Local App Verification
 
-After upload, recordings are available at:
-```
-https://app.replay.io/recording/<recording-id>
-```
-
-The CLI prints this URL directly after a successful upload.
-
-## 4. MCP Analysis
-
-Use the Replay MCP server to programmatically inspect recordings.
-
-### Connection
-
-```
-Endpoint: https://dispatch.replay.io/nut/mcp
-Transport: HTTP SSE
-Headers: Authorization: Bearer <REPLAY_API_KEY>
-```
-
-### Available MCP tools
-
-| Tool | Description |
-|---|---|
-| `Screenshot` | Capture a screenshot at a given timestamp (ms) |
-| `NetworkRequest` | List network requests with status, timing, size |
-| `ConsoleMessages` | Fetch console.log/warn/error messages |
-| `UncaughtException` | List uncaught JS exceptions |
-| `ListSources` | List all JS source files in the recording |
-| `SearchSources` | Search source code by text/regex |
-| `UserInteractions` | List mouse clicks, keyboard events, scrolls |
-| `LocalStorage` | Read localStorage values at a point in time |
-| `ReactComponentTree` | Inspect the React component tree (requires sourcemaps) |
-| `ReactRenders` | List React component renders |
-| `RecordingOverview` | Full overview — cold-computes, allow 3-4 min on first call |
-
-### Example: capture a screenshot at 500ms
-
-Call `Screenshot` with:
-```json
-{ "recordingId": "<id>", "pointMs": 500 }
-```
-
-Returns a signed URL like:
-```
-https://static.replay.io/recordings/<id>/analysis/screenshot-500.jpg
-```
-
-### Example: inspect network requests
-
-Call `NetworkRequest` with:
-```json
-{ "recordingId": "<id>" }
-```
-
-Returns an array of `{ url, method, status, durationMs, responseSize }`.
-
-## 5. Playwright / Cypress Integration
-
-For automated test recordings, install the Replay plugin for your test runner:
+Before browser work, verify the app is reachable from the same environment that will run the browser:
 
 ```bash
-# Playwright
-npm install @replayio/playwright
-
-# Cypress
-npm install @replayio/cypress
+curl -I http://127.0.0.1:3000
 ```
 
-Then run tests with the Replay browser:
+Use the actual dev-server URL. Do not assume the requested port stayed available.
 
-```bash
-# Playwright
-REPLAY_API_KEY="$SECRET_REPLAY_API_KEY" npx playwright test --reporter=@replayio/playwright/reporter
+## Recording Evidence
 
-# Cypress
-REPLAY_API_KEY="$SECRET_REPLAY_API_KEY" npx cypress run --browser replay-chromium
-```
+When reporting a run, include concrete evidence:
 
-All test runs upload automatically and are tagged with the test name for filtering.
+- The app URL tested.
+- The browser executable path used, without secrets.
+- Whether `test -x "$AGENT_BROWSER_EXECUTABLE_PATH"` passed.
+- The Replay recording URL or recording UUID, if available.
+- Any blocker, such as missing `SECRET_REPLAY_API_KEY`, missing Replay Chromium, or an auth wall in the app.
 
-## 6. Troubleshooting
+## Troubleshooting
 
-| Symptom | Fix |
-|---|---|
-| `error while loading shared libraries: libnss3.so` | Run the apt-get install block in §1 |
-| Recording stays at 0ms / crashes immediately | Missing system deps — check stderr for the library name |
-| `RecordingOverview` times out | Normal on first call (cold compute). Wait 3-4 min and retry. Individual tools work immediately. |
-| `replayio: command not found` | Add npm global bin to PATH: `export PATH="$HOME/.npm-global/bin:$PATH"` |
-| Upload hangs | Check `REPLAY_API_KEY` is set and valid; try `replayio upload --all` explicitly |
-| No sourcemaps in `ListSources` | App was built without sourcemaps (production minified build). `ReactComponentTree`/`ReactRenders` won't work. |
-| MCP returns 401 | `Authorization: Bearer` header missing or API key expired |
-
-## 7. Known Working Configuration (Replay.io sandbox)
-
-- **CLI version:** v1.8.2
-- **Runtime:** linux-chromium-20260421 (Chromium 108.0.0 fork)
-- **Headless recording:** ✅ `--headless` flag works directly
-- **MCP transport:** HTTP SSE with Bearer auth ✅
-- **Test target:** https://gentle-travesseiro-d3c6cf.netlify.app (Next.js Notebook app)
-- **Sample recording:** `994543b8-7913-409a-a80c-fe2e1f6175db` — 415ms duration, 10 network requests, 0 errors
-
+- `agent-browser` does not record: confirm it was launched after `AGENT_BROWSER_EXECUTABLE_PATH` was exported.
+- `replayio: command not found`: install with `npm install -g replayio`, then retry.
+- Replay Chromium missing: run `replayio update-browsers --all`.
+- Upload hangs or returns auth errors: verify `REPLAY_API_KEY` is set from `SECRET_REPLAY_API_KEY`.
+- Browser stream is unreachable: confirm `AGENT_BROWSER_STREAM_PORT` matches the agent-browser process.
+- Loop QA returns 401: verify `LOOP_QA_API_KEY` is set from `SECRET_LOOP_QA_API_KEY` and starts with `lqa_`.
