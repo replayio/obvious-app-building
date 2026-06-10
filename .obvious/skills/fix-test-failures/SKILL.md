@@ -122,15 +122,6 @@ Create a document artifact (use document-operations, NOT a file on disk) named
 
 Include ALL scenarios (passes and failures). Only failures get recording links.
 
-### Failure Pattern Analysis
-
-Group related failures by shared symptom. Example:
-
-**Pattern A — <symptom> (N failures):** S01, S03, S07 — <one sentence description>
-**Pattern B — <symptom> (N failures):** S02, S05 — <one sentence description>
-
-Omit this section if all failures appear unrelated to each other.
-
 ### Failure Details
 
 For each failing scenario:
@@ -166,8 +157,9 @@ Spawn a worker with the following prompt. Fill in `<ARTIFACT_ID>` and `<N>`.
 ---
 
 ```
-You are a Fix Stage worker. Your job is to trigger Loop QA analysis on Replay recordings
-of failing tests, wait for all analyses to complete, then apply the fixes Loop QA identifies.
+You are a Fix Stage worker. Handle ALL failures yourself — do NOT spawn subagents.
+Your job is to trigger Loop QA analysis on Replay recordings of failing tests,
+wait for all analyses to complete, then apply the fixes Loop QA identifies.
 
 ❗ HARD RULE: You MUST wait for ALL Loop QA projects to reach status "complete" before
 proceeding to any fixing step. Do not explore the codebase. Do not guess at root causes.
@@ -364,8 +356,8 @@ report final status (see Section 5)
 
 | Scenario | Final Status | Root Cause (brief) | Loop QA Project |
 |---|---|---|---|
-| S01 | ✅ Fixed | setContent feedback loop in RichTextEditor | [link](https://loop-qa.replay.io/projects/...) |
-| S02 | ✅ Fixed | Focus lost after Tippy menu dismiss | [link](https://loop-qa.replay.io/projects/...) |
+| S01 | ✅ Fixed | <root cause one-liner> | [link](https://loop-qa.replay.io/projects/...) |
+| S02 | ✅ Fixed | <root cause one-liner> | [link](https://loop-qa.replay.io/projects/...) |
 | S07 | ❌ Undiagnosed | No bugs found by Loop QA | [link](https://loop-qa.replay.io/projects/...) |
 
 **Summary line:** `N of M tests passing after K iterations and K commits.`
